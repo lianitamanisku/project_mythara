@@ -51,13 +51,25 @@
             </intent-filter>
         </activity>
 
-        <!-- Services to be implemented in later milestones:
+        <!-- Observe-mode foreground service (M8.1a heartbeat skeleton;
+             AudioRecord + Vosk land in M8.1b). The dual foregroundServiceType
+             declares both `microphone` (for the future ASR pipeline) and
+             `specialUse` (long-running app-specific use; Android 14+
+             requires the explicit subType). -->
+        <service
+            android:name=".secret.observe.ObserveForegroundService"
+            android:exported="false"
+            android:foregroundServiceType="microphone|specialUse"
+            tools:targetApi="34">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="long-running on-device speech observation for personal AI assistant" />
+        </service>
+
+        <!-- Other services to come:
              * PhoneControlAccessibilityService (M5)
              * NotificationListener (M5)
-             * AgentForegroundService (M5+)
-             * ObserveForegroundService (M8 — Secret mode)
-             Declarations stay here so the manifest grows incrementally
-             rather than churning across milestones. -->
+             * AgentForegroundService (M5+) -->
 
     </application>
 </manifest>

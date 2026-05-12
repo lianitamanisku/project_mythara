@@ -1,8 +1,12 @@
 package com.mythara.ui.secret
 
+import android.Manifest
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -16,28 +20,46 @@ import androidx.compose.foundation.layout.systemBars
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.hilt.navigation.compose.hiltViewModel
+import com.mythara.secret.observe.ObserveState
 import com.mythara.ui.theme.Glyph
 import com.mythara.ui.theme.MytharaColors
 
 /**
- * The screen behind the triple-tap + password gate. M8.0 is a placeholder
- * — the Observe controls (continuous on-device ASR via Vosk, Gemma-driven
- * learning extraction, encrypted vault browser, "Forget everything")
- * land in M8.1+ once the audio pipeline is wired.
+ * The screen behind the triple-tap + password gate. M8.1a delivers the
+ * real Observe service controls (start / pause / stop, status pill,
+ * RECORD_AUDIO permission gate) and the "forget everything" purge.
  *
- * Visible today so the gate is end-to-end exercisable.
+ * The audio + Vosk ASR + Gemma extractor land in M8.1b. The service
+ * today is a heartbeat that journals "observe" entries every 30s so
+ * lifecycle is end-to-end verifiable on a real device before we add
+ * heavy native dependencies.
  */
 @Composable
-fun SecretSettingsScreen(onBack: () -> Unit) {
+fun SecretSettingsScreen(
+    onBack: () -> Unit,
+    vm: SecretSettingsViewModel = hiltViewModel(),
+) {
+    val state by vm.state.collectAsState()
+
+    val micPermLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission(),
+    ) { _ -> vm.refreshPermission() }
+
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -61,24 +83,129 @@ fun SecretSettingsScreen(onBack: () -> Unit) {
         Spacer(Modifier.height(20.dp))
 
         Panel("status") {
+            val accent = when (val s = state.observeState) {
+                is ObserveState.Running -> MytharaColors.Julep
+                is ObserveState.Starting -> MytharaColors.Citron
+                is ObserveState.Paused -> MytharaColors.Mustard
+                is ObserveState.Stopping -> MytharaColors.FgDim
+                is ObserveState.Error -> MytharaColors.Sriracha
+                is ObserveState.Idle -> MytharaColors.FgMute
+                else -> MytharaColors.FgMute
+            }
+            val glyph = when (state.observeState) {
+                is ObserveState.Running -> Glyph.Dot
+                is ObserveState.Starting -> Glyph.Ellipsis
+                is ObserveState.Paused -> Glyph.CircleOutline
+                is ObserveState.Stopping -> Glyph.Ellipsis
+                is ObserveState.Error -> Glyph.Cross
+                else -> Glyph.CircleOutline
+            }
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(glyph, color = accent, style = MaterialTheme.typography.bodyMedium)
+                Spacer(Modifier.padding(end = 6.dp))
+                Text(
+                    text = state.observeState.displayLabel,
+                    color = MytharaColors.Fg, style = MaterialTheme.typography.bodyMedium,
+                )
+            }
+        }
+
+        Spacer(Modifier.height(14.dp))
+
+        Panel("microphone access") {
+            if (state.micGranted) {
+                Text(
+                    text = "${Glyph.Check} granted",
+                    color = MytharaColors.Julep, style = MaterialTheme.typography.bodyMedium,
+                )
+            } else {
+                Text(
+                    text = "${Glyph.Cross} not granted — Observe can't start without it.",
+                    color = MytharaColors.Sriracha, style = MaterialTheme.typography.bodyMedium,
+                )
+                Spacer(Modifier.height(8.dp))
+                Button(
+                    onClick = { micPermLauncher.launch(Manifest.permission.RECORD_AUDIO) },
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = MytharaColors.Charple, contentColor = MytharaColors.Fg,
+                    ),
+                ) { Text("${Glyph.Arrow} grant microphone") }
+            }
+        }
+
+        Spacer(Modifier.height(14.dp))
+
+        Panel("controls") {
+            val active = state.observeState.isActive
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Button(
+                    onClick = { vm.toggleObserve() },
+                    enabled = state.micGranted && state.observeState !is ObserveState.Stopping,
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = if (active) MytharaColors.Sriracha else MytharaColors.Bok,
+                        contentColor = MytharaColors.Bg,
+                    ),
+                ) {
+                    Text(
+                        text = when {
+                            active -> "${Glyph.Cross} stop observe"
+                            else   -> "${Glyph.Dot} start observe"
+                        },
+                    )
+                }
+                if (state.observeState is ObserveState.Running || state.observeState is ObserveState.Paused) {
+                    Button(
+                        onClick = { vm.pauseOrResume() },
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = MytharaColors.Surface, contentColor = MytharaColors.Fg,
+                        ),
+                    ) {
+                        Text(
+                            text = if (state.observeState is ObserveState.Running) {
+                                "${Glyph.Ellipsis} pause"
+                            } else {
+                                "${Glyph.Arrow} resume"
+                            },
+                        )
+                    }
+                }
+            }
+
+            Spacer(Modifier.height(10.dp))
             Text(
-                text = "${Glyph.CircleOutline} Observe mode is OFF.",
-                color = MytharaColors.Fg, style = MaterialTheme.typography.bodyMedium,
+                text = "${Glyph.AccentBar} a persistent system notification appears whenever the service runs — Android requires it.",
+                color = MytharaColors.FgDim,
+                style = MaterialTheme.typography.bodySmall,
             )
         }
 
         Spacer(Modifier.height(14.dp))
 
-        Panel("coming in m8.1") {
-            Bullet("continuous mic capture with VAD (silence-gated)")
-            Bullet("offline ASR via Vosk small-model (no cloud)")
-            Bullet("learning extraction via on-device MediaPipe Gemma")
-            Bullet("encrypted vault browser + search")
-            Bullet("'forget everything' purge")
-            Bullet("pause / resume toggle + nightly compaction")
+        Panel("today (m8.1a)") {
+            Bullet("foreground service skeleton with the right FGS types")
+            Bullet("persistent notification + tap-to-open")
+            Bullet("heartbeat journal entry every 30s while running")
+            Bullet("RawDataPurger ready — sweeps observe/ scratch on each tick")
+            Bullet("'forget everything' wipes scratch + journal in one shot")
+        }
+
+        Spacer(Modifier.height(14.dp))
+
+        Panel("coming in m8.1b") {
+            Bullet("AudioRecord pipeline + VAD silence gating")
+            Bullet("offline ASR via Vosk small-model")
+            Bullet("raw PCM auto-purged 60s after transcribe")
+            Bullet("transcripts purged 24h after extraction")
+            Bullet("learning extraction via on-device MediaPipe Gemma (m8.2)")
+            Bullet("encrypted vault browser (m8.2)")
             Spacer(Modifier.height(6.dp))
             Text(
-                text = "${Glyph.AccentBar} audio + transcripts auto-purge on schedule; only learnings persist.",
+                text = "${Glyph.AccentBar} audio + transcripts never leave the device.",
                 color = MytharaColors.FgDim,
                 style = MaterialTheme.typography.bodySmall.copy(letterSpacing = 1.sp),
             )
@@ -86,14 +213,51 @@ fun SecretSettingsScreen(onBack: () -> Unit) {
 
         Spacer(Modifier.height(14.dp))
 
-        Panel("privacy invariants (baked into code)") {
-            Bullet("observe audio + transcripts NEVER leave the device")
-            Bullet("the foreground-service notification is mandatory (Android requires it)")
-            Bullet("'forget everything' purges in one transaction")
-            Bullet("growth jobs are pausable from this panel")
+        Panel("danger zone") {
+            Text(
+                text = "forget everything wipes Observe scratch + the learning journal. " +
+                    "your chat history and settings are unaffected.",
+                color = MytharaColors.FgMute,
+                style = MaterialTheme.typography.bodySmall,
+            )
+            Spacer(Modifier.height(10.dp))
+            Button(
+                onClick = { vm.openForgetConfirm() },
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = MytharaColors.Sriracha, contentColor = MytharaColors.Fg,
+                ),
+            ) { Text("${Glyph.Cross} forget everything") }
         }
 
         Spacer(Modifier.height(40.dp))
+
+        if (state.confirmingForget) {
+            AlertDialog(
+                onDismissRequest = { vm.cancelForget() },
+                title = { Text("forget everything?", color = MytharaColors.Fg) },
+                text = {
+                    Text(
+                        text = "this wipes the Observe scratch directory + the learning journal in one transaction. there is no undo.",
+                        color = MytharaColors.FgMute,
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                },
+                containerColor = MytharaColors.Surface,
+                confirmButton = {
+                    Button(
+                        onClick = { vm.confirmForget() },
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = MytharaColors.Sriracha, contentColor = MytharaColors.Fg,
+                        ),
+                    ) { Text("${Glyph.Cross} forget") }
+                },
+                dismissButton = {
+                    TextButton(onClick = { vm.cancelForget() }) {
+                        Text("cancel", color = MytharaColors.FgMute)
+                    }
+                },
+            )
+        }
     }
 }
 
@@ -119,16 +283,8 @@ private fun Panel(title: String, body: @Composable () -> Unit) {
 @Composable
 private fun Bullet(text: String) {
     Row(modifier = Modifier.padding(vertical = 2.dp), verticalAlignment = Alignment.Top) {
-        Text(
-            text = Glyph.Dot,
-            color = MytharaColors.Bok,
-            style = MaterialTheme.typography.bodySmall,
-        )
+        Text(Glyph.Dot, color = MytharaColors.Bok, style = MaterialTheme.typography.bodySmall)
         Spacer(Modifier.padding(end = 6.dp))
-        Text(
-            text = text,
-            color = MytharaColors.FgMute,
-            style = MaterialTheme.typography.bodySmall,
-        )
+        Text(text = text, color = MytharaColors.FgMute, style = MaterialTheme.typography.bodySmall)
     }
 }
