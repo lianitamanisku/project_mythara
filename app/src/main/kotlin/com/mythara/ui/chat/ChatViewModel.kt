@@ -3,6 +3,7 @@ package com.mythara.ui.chat
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.mythara.agent.AgentLoop
+import com.mythara.agent.Thinks
 import com.mythara.data.HistoryRepository
 import com.mythara.data.MessageRow
 import com.mythara.mic.Tts
@@ -40,6 +41,12 @@ class ChatViewModel @Inject constructor(
         val key: String
         data class UserText(override val key: String, val text: String) : ChatItem
         data class AssistantText(override val key: String, val text: String, val streaming: Boolean = false) : ChatItem
+        /** Reasoning trace extracted from `<think>…</think>` in the model's response. */
+        data class Thought(
+            override val key: String,
+            val text: String,
+            val streaming: Boolean = false,
+        ) : ChatItem
         data class Tool(
             override val key: String,
             val name: String,
@@ -107,7 +114,12 @@ class ChatViewModel @Inject constructor(
                     }
                     is AgentLoop.Turn.Finished -> {
                         _ui.update { it.copy(streaming = null, thinking = false) }
-                        tts.speak(turn.finalText.removeSuffix(" [hit max iterations]"))
+                        // Strip <think>…</think> blocks before speaking — the
+                        // reasoning trace is rendered as Thought bubbles in
+                        // the UI but should not be read aloud.
+                        val spoken = Thinks.strip(turn.finalText)
+                            .removeSuffix(" [hit max iterations]")
+                        if (spoken.isNotBlank()) tts.speak(spoken)
                     }
                     is AgentLoop.Turn.Error -> _ui.update {
                         it.copy(streaming = null, thinking = false, errorBanner = turn.message)
@@ -130,18 +142,29 @@ class ChatViewModel @Inject constructor(
                 "user" -> items.add(ChatItem.UserText(key = "u:${row.id}", text = row.content.orEmpty()))
                 "assistant" -> {
                     if (!row.content.isNullOrEmpty()) {
-                        items.add(ChatItem.AssistantText(key = "a:${row.id}", text = row.content))
+                        // Split on <think>…</think> blocks so reasoning renders
+                        // as its own Crush-styled bubble, separate from the
+                        // assistant's actual reply text.
+                        val segments = Thinks.parse(row.content)
+                        segments.forEachIndexed { idx, seg ->
+                            when (seg) {
+                                is Thinks.Segment.Text -> items.add(
+                                    ChatItem.AssistantText(key = "a:${row.id}:$idx", text = seg.content),
+                                )
+                                is Thinks.Segment.Thought -> items.add(
+                                    ChatItem.Thought(
+                                        key = "t:${row.id}:$idx",
+                                        text = seg.content,
+                                        streaming = !seg.closed,
+                                    ),
+                                )
+                            }
+                        }
                     }
-                    // Assistant turns with tool_calls produce paired Tool rows
-                    // when their results arrive (role=tool below). We don't
-                    // render anything extra for the assistant row itself
-                    // beyond text — the tool bubble is the visual peer.
                 }
                 "tool" -> {
                     val callId = row.toolCallId.orEmpty()
                     val toolName = row.name.orEmpty()
-                    // Determine ok by best-effort — registry packs JSON; assume
-                    // ok unless content is empty or starts with "fetch failed"/etc.
                     val isFailure = row.content.isNullOrBlank() ||
                         row.content.startsWith("fetch failed") ||
                         row.content.startsWith("unknown tool") ||
@@ -158,7 +181,6 @@ class ChatViewModel @Inject constructor(
                 }
             }
         }
-        // Append still-inflight tools at the bottom (they haven't persisted yet).
         items.addAll(inflightTools.values)
         _ui.update { it.copy(items = items) }
     }

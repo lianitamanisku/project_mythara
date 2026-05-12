@@ -105,6 +105,12 @@ class AgentLoop @Inject constructor(
                 tools = registry.apiSchema().takeIf { it.isNotEmpty() },
                 toolChoice = if (registry.apiSchema().isNotEmpty()) "auto" else null,
                 stream = true,
+                // MiniMax M2.7 is a reasoning model; without reasoning_split=false
+                // it emits thinking tokens through a side channel
+                // (delta.reasoning_details) that the SSE parser doesn't surface
+                // and the tool-use loop can't round-trip. Keep reasoning baked
+                // into `content` so history replay works verbatim.
+                reasoningSplit = false,
             )
 
             val streamedText = StringBuilder()

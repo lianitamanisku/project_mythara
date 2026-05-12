@@ -22,6 +22,19 @@ data class ChatRequest(
     val temperature: Double? = null,
     /** MiniMax docs use `max_completion_tokens` (OpenAI's newer name). Cap = 2048 on M2.7. */
     @SerialName("max_completion_tokens") val maxCompletionTokens: Int? = null,
+    /**
+     * MiniMax-specific. When `false`, reasoning tokens are embedded in the
+     * assistant message `content`. When `true`, they arrive as a separate
+     * `reasoning_details` field on the delta and we'd have to surface them
+     * ourselves.
+     *
+     * The official function-calling example
+     * (platform.minimax.io/docs/guides/text-m2-function-call) sets this to
+     * `false` for tool use because the loop has to round-trip the assistant
+     * message verbatim — splitting reasoning out of `content` would break
+     * the next turn. We default to false for the same reason.
+     */
+    @SerialName("reasoning_split") val reasoningSplit: Boolean? = null,
 )
 
 @Serializable

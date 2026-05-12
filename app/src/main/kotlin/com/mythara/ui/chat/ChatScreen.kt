@@ -178,6 +178,7 @@ private fun Transcript(items: List<ChatViewModel.ChatItem>, streaming: String?) 
             when (item) {
                 is ChatViewModel.ChatItem.UserText -> TextBubble(role = "you", text = item.text, isUser = true)
                 is ChatViewModel.ChatItem.AssistantText -> TextBubble(role = "mythara", text = item.text, isUser = false)
+                is ChatViewModel.ChatItem.Thought -> ThoughtBubble(item)
                 is ChatViewModel.ChatItem.Tool -> ToolCallBubble(item)
             }
         }

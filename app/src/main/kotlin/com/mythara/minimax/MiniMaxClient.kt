@@ -79,9 +79,17 @@ class MiniMaxClient(
     }
 
     companion object {
+        /**
+         * Shared JSON config. The non-obvious choice is `encodeDefaults = true`
+         * so that default-valued fields (notably `Tool.type = "function"` and
+         * `stream = true`) are serialised on the wire. With encodeDefaults=false
+         * MiniMax received tools without a `type` field and rejected the
+         * request with `(2013) invalid tool type`. Null fields are still
+         * dropped via `explicitNulls = false`.
+         */
         val json: Json = Json {
             ignoreUnknownKeys = true
-            encodeDefaults = false
+            encodeDefaults = true
             isLenient = true
             explicitNulls = false
         }

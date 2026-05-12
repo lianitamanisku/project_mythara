@@ -1,5 +1,6 @@
 package com.mythara.minimax
 
+import android.util.Log
 import com.mythara.minimax.models.ChatChunk
 import com.mythara.minimax.models.ChatRequest
 import com.mythara.minimax.models.ToolCall
@@ -13,6 +14,8 @@ import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.sse.EventSource
 import okhttp3.sse.EventSourceListener
 import okhttp3.sse.EventSources
+
+private const val TAG = "Mythara/Stream"
 
 /**
  * Streaming chat over SSE. Builds a `POST /chat/completions` request with
@@ -49,8 +52,11 @@ class StreamingChat(private val client: MiniMaxClient) {
      * the collector closes the SSE source.
      */
     fun stream(region: Region, request: ChatRequest): Flow<StreamEvent> = callbackFlow {
-        val body = MiniMaxClient.json.encodeToString(ChatRequest.serializer(), request)
-            .toRequestBody("application/json".toMediaType())
+        val bodyJson = MiniMaxClient.json.encodeToString(ChatRequest.serializer(), request)
+        // Redacted log: surface the model + tool count + message count so we can
+        // verify the wire payload without printing the user's keys or content.
+        Log.d(TAG, "POST chat/completions model=${request.model} tools=${request.tools?.size ?: 0} msgs=${request.messages.size} stream=${request.stream}")
+        val body = bodyJson.toRequestBody("application/json".toMediaType())
         val httpReq = Request.Builder()
             .url(region.baseUrl + "chat/completions")
             .post(body)
@@ -62,16 +68,24 @@ class StreamingChat(private val client: MiniMaxClient) {
         val toolBuf = mutableMapOf<Int, ToolCallAccumulator>()
 
         val listener = object : EventSourceListener() {
+            override fun onOpen(es: EventSource, response: okhttp3.Response) {
+                Log.d(TAG, "SSE open http=${response.code} ct=${response.header("Content-Type")}")
+            }
+
             override fun onEvent(es: EventSource, id: String?, type: String?, data: String) {
                 // MiniMax (OpenAI-compat) uses unnamed `data:` events.
                 if (data == "[DONE]") {
+                    Log.d(TAG, "SSE [DONE]")
                     trySend(StreamEvent.Done(finishReason = null))
                     close()
                     return
                 }
                 val chunk = runCatching {
                     MiniMaxClient.json.decodeFromString(ChatChunk.serializer(), data)
-                }.getOrElse { return }
+                }.getOrElse {
+                    Log.w(TAG, "SSE decode failed: ${it.message ?: it.javaClass.simpleName}; raw=${data.take(200)}")
+                    return
+                }
                 val choice = chunk.choices.firstOrNull() ?: return
                 choice.delta.content?.let { if (it.isNotEmpty()) trySend(StreamEvent.Text(it)) }
                 choice.delta.toolCalls?.forEach { td ->
@@ -80,12 +94,20 @@ class StreamingChat(private val client: MiniMaxClient) {
                     td.type?.let { acc.type = it }
                     td.function?.name?.let { acc.name = it }
                     td.function?.arguments?.let { acc.args.append(it) }
+                    Log.d(TAG, "tool delta idx=${td.index} name=${acc.name} argsLen=${acc.args.length}")
                 }
                 choice.finishReason?.let { reason ->
-                    if (reason == "tool_calls" && toolBuf.isNotEmpty()) {
+                    Log.d(TAG, "SSE finish_reason=$reason toolBuf=${toolBuf.size}")
+                    // MiniMax may emit either "tool_use" (per their function-call
+                    // guide) or "tool_calls" (OpenAI canonical). Both mean the
+                    // model invoked tools and the loop should resume after we
+                    // execute them.
+                    val isToolFinish = reason == "tool_calls" || reason == "tool_use"
+                    if (isToolFinish && toolBuf.isNotEmpty()) {
                         val finalised = toolBuf.values
                             .sortedBy { it.id }
                             .mapNotNull { it.toToolCall() }
+                        Log.d(TAG, "tool_calls ready n=${finalised.size}")
                         trySend(StreamEvent.ToolCallsReady(finalised))
                     }
                     trySend(StreamEvent.Done(reason))
@@ -96,6 +118,7 @@ class StreamingChat(private val client: MiniMaxClient) {
             override fun onFailure(es: EventSource, t: Throwable?, response: okhttp3.Response?) {
                 val status = response?.code ?: 0
                 val errBody = response?.body?.string()
+                Log.e(TAG, "SSE failure http=$status err=${t?.message} body=${errBody?.take(300)}")
                 val mapped = ErrorMapper.fromHttp(status, errBody)
                 trySend(StreamEvent.Failure(mapped))
                 close()
