@@ -121,6 +121,10 @@ dependencies {
     implementation(libs.hilt.work)
     ksp(libs.hilt.work.compiler)
 
+    // Device-credential / biometric unlock at app entry
+    implementation(libs.androidx.biometric)
+    implementation(libs.androidx.lifecycle.process)
+
     // M5+ deps deferred until their milestones land:
     //   CameraX (take_photo), SQLCipher (Observe vault), Argon2 (Secret pw)
 }

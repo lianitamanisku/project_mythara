@@ -20,6 +20,8 @@ splashscreen = "1.0.1"
 material3 = "1.3.1"
 workmanager = "2.10.0"
 hiltWork = "1.2.0"
+biometric = "1.1.0"
+lifecycleProcess = "2.8.7"
 
 # Deferred — added back when their milestone lands:
 #   camerax  → M5 (take_photo tool)
@@ -72,6 +74,12 @@ tink-android = { group = "com.google.crypto.tink", name = "tink-android", versio
 androidx-work-runtime = { group = "androidx.work", name = "work-runtime-ktx", version.ref = "workmanager" }
 hilt-work = { group = "androidx.hilt", name = "hilt-work", version.ref = "hiltWork" }
 hilt-work-compiler = { group = "androidx.hilt", name = "hilt-compiler", version.ref = "hiltWork" }
+
+# Biometric / device-credential unlock at app entry
+androidx-biometric = { group = "androidx.biometric", name = "biometric", version.ref = "biometric" }
+# ProcessLifecycleOwner — fires onStop when the app is fully backgrounded,
+# our signal to auto-lock the auth gate.
+androidx-lifecycle-process = { group = "androidx.lifecycle", name = "lifecycle-process", version.ref = "lifecycleProcess" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }
