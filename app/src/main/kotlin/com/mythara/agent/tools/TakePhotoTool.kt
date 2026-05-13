@@ -3,12 +3,14 @@ package com.mythara.agent.tools
 import com.mythara.agent.Tool
 import com.mythara.agent.ToolResult
 import com.mythara.camera.CameraCapture
+import com.mythara.minimax.VisionService
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
+import java.io.File
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -38,6 +40,7 @@ import javax.inject.Singleton
 @Singleton
 class TakePhotoTool @Inject constructor(
     private val capture: CameraCapture,
+    private val vision: VisionService,
 ) : Tool {
 
     @Serializable
@@ -48,12 +51,20 @@ class TakePhotoTool @Inject constructor(
         val sizeBytes: Long,
         val lens: String,
         val captureTimeMs: Long,
+        /** Free-text description from MiniMax-VL-01. Null when vision failed. */
+        val description: String? = null,
+        /** Error code if vision call failed; null on success. */
+        val visionError: String? = null,
     )
 
     override val name: String = "take_photo"
 
     override val description: String =
-        "Capture one photo using the phone's camera and save it to Mythara's private storage. Returns the file path, dimensions, and lens used. Use when the user asks 'take a picture of this' or 'take a selfie'."
+        "Capture one photo using the phone's camera AND get a vision-model description of what's in it. " +
+            "Returns the file path, dimensions, lens used, and a short description. " +
+            "Use when the user asks 'take a picture of this', 'take a selfie', or 'what do you see?'. " +
+            "Pass a `prompt` argument to focus the description on a specific question " +
+            "(e.g. 'is the person in this picture wearing a helmet?')."
 
     override val parameters: JsonObject = buildJsonObject {
         put("type", "object")
@@ -76,6 +87,16 @@ class TakePhotoTool @Inject constructor(
                         )
                     },
                 )
+                put(
+                    "prompt",
+                    buildJsonObject {
+                        put("type", "string")
+                        put(
+                            "description",
+                            "What to look for / answer about the photo. Optional; defaults to a generic short description. Be specific when the user's request implies a question — e.g. 'count the people' or 'read the text on the sign'.",
+                        )
+                    },
+                )
             },
         )
         put("required", kotlinx.serialization.json.JsonArray(emptyList()))
@@ -87,8 +108,27 @@ class TakePhotoTool @Inject constructor(
             "front", "selfie" -> CameraCapture.Lens.Front
             else -> CameraCapture.Lens.Back
         }
+        val promptArg = (args["prompt"] as? JsonPrimitive)?.content?.takeIf { it.isNotBlank() }
+
         return when (val r = capture.capture(lens)) {
             is CameraCapture.Result.Ok -> {
+                // Vision pass — always run unless the photo couldn't be
+                // read. We surface the result inside the SAME tool
+                // result so the agent loop sees the description on the
+                // very next iteration (no chained-tool round-trip
+                // required).
+                val visionOutcome = runCatching {
+                    vision.describeImage(
+                        imageFile = File(r.path),
+                        prompt = promptArg ?: VisionService.DEFAULT_PROMPT,
+                    )
+                }.getOrElse { e ->
+                    VisionService.Outcome(
+                        ok = false,
+                        text = e.message ?: e.javaClass.simpleName,
+                        code = "threw",
+                    )
+                }
                 val response = Response(
                     path = r.path,
                     widthPx = r.widthPx,
@@ -96,6 +136,8 @@ class TakePhotoTool @Inject constructor(
                     sizeBytes = r.sizeBytes,
                     lens = r.lens,
                     captureTimeMs = r.captureTimeMs,
+                    description = visionOutcome.text.takeIf { visionOutcome.ok },
+                    visionError = if (visionOutcome.ok) null else visionOutcome.code,
                 )
                 ToolResult(ok = true, output = JSON.encodeToString(Response.serializer(), response))
             }
