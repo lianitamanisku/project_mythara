@@ -148,17 +148,31 @@ class AgentLoop @Inject constructor(
         val voiceSystem: ChatMessage = ChatMessage(
             role = "system",
             content =
-                "Reply like a friend texting, not an assistant generating a deliverable. " +
-                    "Constraints every turn: " +
-                    "(1) 1–2 short sentences, max ~40 words. Longer ONLY if the user explicitly asked for detail. " +
-                    "(2) Conversational tone — no formal openers ('Sure!', 'Certainly!', 'I'd be happy to'), no sign-offs ('Let me know if you need anything else'). " +
-                    "(3) NEVER use markdown, lists, headers, code blocks, URLs, or bullets in spoken-style replies. " +
-                    "(4) Numbers + symbols spoken-out ('5%' → 'five percent'). Drop URLs entirely unless the user asked for one. " +
-                    "(5) If the full answer is long, lead with the headline and offer to go deeper ('want me to dig in?'). " +
-                    "(6) Real conversation has variety — sometimes a one-liner, sometimes a question back, sometimes 'I don't know'. Match the mood (see emotional-context message).\n\n" +
+                "Reply like a friend texting, not an assistant generating a deliverable.\n\n" +
+                    "WRITE PLAIN PROSE — NEVER MARKDOWN, NEVER LISTS, NEVER TABLES, NEVER ROBOT TEXT.\n" +
+                    "Your output is going to be both shown in a chat bubble AND read aloud. Markdown breaks both: the user sees literal pipe characters and asterisks, the TTS reads 'pipe pipe column pipe pipe'.\n\n" +
+                    "FORBIDDEN — never emit any of these:\n" +
+                    "  • Tables: never `| col1 | col2 |` or any pipe-separated rows.\n" +
+                    "  • Bullet points: never `• item` / `- item` / `* item`.\n" +
+                    "  • Numbered lists: never `1. item / 2. item` style.\n" +
+                    "  • Headers: never `# Title` / `## Subtitle`.\n" +
+                    "  • Bold/italic markers: never `**bold**` or `_italic_`.\n" +
+                    "  • Code fences: never ``` blocks. Even if asked for code, give a one-line description and ask if they want it pasted.\n" +
+                    "  • Backtick inline code: never `text` style.\n" +
+                    "  • Bare URLs: drop them unless the user asked specifically for the link.\n\n" +
+                    "When a tool returns structured data (a list of events, a contact, a JSON response), TRANSLATE it into a single flowing sentence. Examples:\n" +
+                    "  Bad: \"Your calendar:\\n- 9am Standup\\n- 12pm Lunch\\n- 4pm Dentist\"\n" +
+                    "  Good: \"Three things today — standup at 9, lunch at noon, and dentist at 4.\"\n" +
+                    "  Bad: \"| Name | Phone |\\n|------|-------|\\n| Mom | +1... |\"\n" +
+                    "  Good: \"Mom is at plus-one four-one-five etc.\"\n\n" +
+                    "OTHER RULES:\n" +
+                    "(1) 1–2 short sentences, max ~40 words. Longer ONLY if the user explicitly asked for detail.\n" +
+                    "(2) Conversational tone — no formal openers ('Sure!', 'Certainly!', 'I'd be happy to') or sign-offs ('Let me know if you need anything else'). Just answer.\n" +
+                    "(3) Numbers + symbols spoken-out where natural ('5%' → 'five percent', '$10' → 'ten bucks').\n" +
+                    "(4) Real conversation has variety — sometimes a one-liner, sometimes a question back, sometimes 'I don't know'. Match the mood (see emotional-context message).\n\n" +
                     "TOOL-USE RULES — read carefully, the user has been burned by violations:\n" +
-                    "  • If a tool RETURNS the data the user asked for (e.g. list_calendar_events returns a JSON list of events), DO NOT also call open_app to 'show' them the data in the original app. The user asked for the answer, not the app launch. Just relay the data in your reply.\n" +
-                    "  • Only call open_app, place_call, send_sms_direct, send_whatsapp, tap, swipe, type_text, or any other side-effect tool when the user EXPLICITLY asked for that action ('open Spotify', 'text mom', 'tap that button'). 'list X' / 'show me X' / 'what's on X' = read-only, never launch the app.\n" +
+                    "  • If a tool RETURNS the data the user asked for, DO NOT also call open_app to 'show' them the data. Just relay the data in your reply.\n" +
+                    "  • Only call open_app, place_call, send_sms_direct, send_whatsapp, tap, swipe, type_text, or any other side-effect tool when the user EXPLICITLY asked for that action. 'list X' / 'show me X' / 'what's on X' = read-only, never launch the app.\n" +
                     "  • Pushing the user out of Mythara mid-conversation is a UX failure. If you need to launch something, say so first and confirm intent on the next turn.",
         )
 
@@ -609,18 +623,14 @@ class AgentLoop @Inject constructor(
     private fun buildTimeContext(): String {
         val now = java.time.ZonedDateTime.now()
         val isoLocal = now.format(java.time.format.DateTimeFormatter.ISO_OFFSET_DATE_TIME)
-        val dayOfWeek = now.dayOfWeek.getDisplayName(
-            java.time.format.TextStyle.FULL,
-            java.util.Locale.getDefault(),
-        )
         val timeOfDay = when (now.hour) {
-            in 0..4 -> "late night"
+            in 0..4 -> "the middle of the night"
             in 5..8 -> "early morning"
-            in 9..11 -> "morning"
+            in 9..11 -> "mid-morning"
             in 12..13 -> "midday"
             in 14..17 -> "afternoon"
             in 18..20 -> "evening"
-            in 21..23 -> "night"
+            in 21..23 -> "late evening"
             else -> "morning"
         }
         val tz = now.zone.id
@@ -628,13 +638,20 @@ class AgentLoop @Inject constructor(
         val humanTime = now.format(java.time.format.DateTimeFormatter.ofPattern("h:mm a"))
         val humanDate = now.format(java.time.format.DateTimeFormatter.ofPattern("EEEE, MMMM d, yyyy"))
         return buildString {
-            append("CURRENT TIME (always-fresh, regenerated every turn — trust THIS over your training data):\n")
-            append("- right now: $humanTime, $humanDate ($timeOfDay)\n")
-            append("- ISO-8601 local: $isoLocal\n")
-            append("- timezone: $tz\n")
-            append("- epoch millis: $epochMs\n")
-            append("Use this anchor for 'yesterday', 'tomorrow', 'last week', " +
-                "'in 2 hours' etc. Do NOT call get_time unless the user explicitly asks for the time itself.")
+            append("RIGHT NOW for the user: it's $humanTime on $humanDate — $timeOfDay. ")
+            append("Timezone $tz. Epoch ms $epochMs. ISO $isoLocal.\n\n")
+            append(
+                "Use this naturally in conversation. Say 'this morning', 'tonight', 'tomorrow', " +
+                    "'in an hour', 'a couple of weeks from now' when relevant. " +
+                    "If the user asks 'what day is it' / 'what time is it', you already know — " +
+                    "answer in one sentence, don't call get_time. " +
+                    "If the user references time-relative things ('the dentist tomorrow', " +
+                    "'last Tuesday', 'next week'), resolve against THIS moment, not your training " +
+                    "cutoff. Don't open every reply with the time — weave it in only when it " +
+                    "makes the answer feel grounded ('you've got ~3 hours before that meeting'). " +
+                    "On a fresh greeting, the time-of-day window is fair to acknowledge " +
+                    "(\"morning\" greeting before 11am, etc.) — but don't force it.",
+            )
         }
     }
 

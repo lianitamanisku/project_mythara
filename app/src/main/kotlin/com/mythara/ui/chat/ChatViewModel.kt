@@ -390,9 +390,29 @@ class ChatViewModel @Inject constructor(
                             val segments = Thinks.parse(row.content)
                             segments.forEachIndexed { idx, seg ->
                                 when (seg) {
-                                    is Thinks.Segment.Text -> items.add(
-                                        ChatItem.AssistantText(key = "a:${row.id}:$idx", text = seg.content),
-                                    )
+                                    is Thinks.Segment.Text -> {
+                                        // Backstop: flatten any markdown the
+                                        // model emitted into spoken-style
+                                        // prose before showing in chat. The
+                                        // system prompt forbids markdown but
+                                        // models sometimes regress, and the
+                                        // user reading "| Time | Event |..."
+                                        // in a chat bubble is a bad
+                                        // experience. SpokenText.forSpeech
+                                        // converts tables/lists/headers into
+                                        // flowing sentences. We keep audio
+                                        // tags so [laugh]/[sigh] remain
+                                        // visible — that's intentional
+                                        // emotion context the user can read
+                                        // as "Lumi laughed".
+                                        val display = SpokenText.forSpeech(
+                                            input = seg.content,
+                                            keepAudioTags = true,
+                                        ).ifBlank { seg.content }
+                                        items.add(
+                                            ChatItem.AssistantText(key = "a:${row.id}:$idx", text = display),
+                                        )
+                                    }
                                     is Thinks.Segment.Thought -> items.add(
                                         ChatItem.Thought(
                                             key = "t:${row.id}:$idx",
