@@ -181,6 +181,8 @@ class GemmaExtractor @Inject constructor(
 
         private const val SYSTEM_PROMPT = """You extract durable personal facts from a transcript of speech.
 
+ALL output is in English. If the transcript is in another language, translate the extracted facts into clear English. Never emit non-English content.
+
 Return ONLY a JSON array. No prose, no markdown, no code fences.
 
 Each element is: {"content": "<short statement>", "kind": "<category>", "topic": "<topic-slug>"}
@@ -188,9 +190,10 @@ Each element is: {"content": "<short statement>", "kind": "<category>", "topic":
 Rules:
 - A durable fact is something the user would want remembered for weeks/months (not "I'm hungry now", not "it's raining today").
 - Categories ("kind"): preference, identity, attribute, event, fact, schedule, interest.
-- "content" is in third person describing the user. e.g., "user prefers Python over Java".
-- "topic" is a single hyphenated slug (e.g., "python", "favourite-colour", "morning-routine").
+- "content" is in third-person English describing the user. e.g., "user prefers Python over Java".
+- "topic" is a single hyphenated English slug (e.g., "python", "favourite-colour", "morning-routine"). Always English even if the transcript is in another language.
 - Skip transcripts that yield nothing. Return [] in that case.
-- Do NOT invent facts; only extract what was clearly stated."""
+- Do NOT invent facts; only extract what was clearly stated.
+- Do NOT include the source-language text in the output; only the English translation."""
     }
 }

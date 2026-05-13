@@ -85,10 +85,13 @@ class VoskModelStore @Inject constructor(@ApplicationContext private val ctx: Co
     init {
         migrateLegacyPath()
         refreshAvailability()
-        // Snapshot the active state synchronously so callers asking
-        // immediately after Hilt construction (e.g., VoskAsr.isReady)
-        // get a non-Missing answer when the model is already on disk.
-        val active = runBlocking { activeLanguage() }
+        // Lock the active language to English-US for the v1 simplified UI.
+        // The multi-language plumbing (Language enum, per-lang download)
+        // is left in code in case a future "advanced mode" toggle restores
+        // the picker. Until then, Observe is English-only and Gemma
+        // extracts in English regardless of source-language transcripts.
+        runBlocking { setActiveLanguage(Language.EnglishUS) }
+        val active = Language.EnglishUS
         _activeState.value = if (isExtractedFor(active)) {
             State.Ready(active, modelDirFor(active).absolutePath)
         } else State.Missing

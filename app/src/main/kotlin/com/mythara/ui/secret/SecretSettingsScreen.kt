@@ -361,6 +361,74 @@ fun SecretSettingsScreen(
 
         Spacer(Modifier.height(14.dp))
 
+        Panel("extractor model (Gemma 3 1B INT4, ~530MB)") {
+            when (val gs = state.gemmaModelState) {
+                is GemmaModelStore.State.Ready -> {
+                    Text(
+                        text = "${Glyph.Check} Gemma ready — facts extracted in English regardless of source language.",
+                        color = MytharaColors.Julep,
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+                    Spacer(Modifier.height(6.dp))
+                    Button(
+                        onClick = { vm.forgetGemmaModel() },
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = MytharaColors.Surface, contentColor = MytharaColors.Fg,
+                        ),
+                    ) { Text("${Glyph.Cross} clear cache") }
+                }
+                is GemmaModelStore.State.Missing -> {
+                    Text(
+                        text = "${Glyph.Cross} not downloaded — semantic extraction falls back to a regex heuristic until Gemma is available.",
+                        color = MytharaColors.Mustard,
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    Button(
+                        onClick = { vm.ensureGemmaModel() },
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = MytharaColors.Charple, contentColor = MytharaColors.Fg,
+                        ),
+                    ) { Text("${Glyph.Arrow} download Gemma (~530MB)") }
+                }
+                is GemmaModelStore.State.Downloading -> Text(
+                    text = "${Glyph.Ellipsis} downloading ${gs.pct}% (${gs.bytes / 1_000_000}MB / ${gs.total / 1_000_000}MB)",
+                    color = MytharaColors.Citron,
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+                is GemmaModelStore.State.Failed -> {
+                    Text(
+                        text = "${Glyph.Cross} failed: ${gs.message}",
+                        color = MytharaColors.Sriracha,
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Button(
+                            onClick = { vm.ensureGemmaModel() },
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = MytharaColors.Charple, contentColor = MytharaColors.Fg,
+                            ),
+                        ) { Text("${Glyph.Refresh} retry") }
+                        Button(
+                            onClick = { vm.forgetGemmaModel() },
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = MytharaColors.Surface, contentColor = MytharaColors.Fg,
+                            ),
+                        ) { Text("${Glyph.Cross} clear cache") }
+                    }
+                }
+            }
+            Spacer(Modifier.height(6.dp))
+            Text(
+                text = "${Glyph.AccentBar} Gemma runs entirely on-device. transcripts never leave the phone. extracted facts are always in English so the synced vault stays consistent.",
+                color = MytharaColors.FgDim,
+                style = MaterialTheme.typography.bodySmall.copy(letterSpacing = 1.sp),
+            )
+        }
+
+        Spacer(Modifier.height(14.dp))
+
         Panel("learning vault (durable)") {
             Text(
                 text = "${state.vaultCount} record(s) stored locally — working-tier transcripts + heuristic-extracted semantic facts. semantic records sync to your GitHub memory repo; working stays on-device.",
