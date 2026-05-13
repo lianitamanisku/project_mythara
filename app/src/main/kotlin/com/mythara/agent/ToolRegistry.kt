@@ -1,6 +1,7 @@
 package com.mythara.agent
 
 import com.mythara.agent.tools.BatteryTool
+import com.mythara.agent.tools.ReadNotificationsTool
 import com.mythara.agent.tools.ReadScreenTool
 import com.mythara.agent.tools.TimeTool
 import com.mythara.agent.tools.WebFetchTool
@@ -28,8 +29,11 @@ class ToolRegistry @Inject constructor(
     batteryTool: BatteryTool,
     webFetchTool: WebFetchTool,
     readScreenTool: ReadScreenTool,
+    readNotificationsTool: ReadNotificationsTool,
 ) {
-    private val tools: List<Tool> = listOf(timeTool, batteryTool, webFetchTool, readScreenTool)
+    private val tools: List<Tool> = listOf(
+        timeTool, batteryTool, webFetchTool, readScreenTool, readNotificationsTool,
+    )
     private val byName: Map<String, Tool> = tools.associateBy { it.name }
 
     /** Names of all registered tools — for UI surfacing and diagnostics. */

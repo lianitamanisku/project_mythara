@@ -66,6 +66,20 @@
                 android:value="long-running on-device speech observation for personal AI assistant" />
         </service>
 
+        <!-- M5 Notification listener. User grants via Settings →
+             Apps → Special app access → Notification access; can't be
+             auto-granted by the app. Buffer is in-memory only, never
+             persisted. -->
+        <service
+            android:name=".services.NotificationListener"
+            android:exported="true"
+            android:label="@string/app_name"
+            android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE">
+            <intent-filter>
+                <action android:name="android.service.notification.NotificationListenerService" />
+            </intent-filter>
+        </service>
+
         <!-- M5 Phone-control Accessibility Service. Bound + driven by
              the system when the user enables it in Settings →
              Accessibility. canRetrieveWindowContent powers `read_screen`;

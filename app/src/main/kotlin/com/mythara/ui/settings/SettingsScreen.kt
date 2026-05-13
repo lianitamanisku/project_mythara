@@ -183,6 +183,9 @@ fun SettingsScreen(
         AccessibilityPanel()
 
         Spacer(Modifier.height(16.dp))
+        NotificationAccessPanel()
+
+        Spacer(Modifier.height(16.dp))
         RecallPanel()
 
         Spacer(Modifier.height(16.dp))
