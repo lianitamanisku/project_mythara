@@ -157,6 +157,27 @@
             android:exported="true"
             android:permission="android.permission.BIND_VOICE_INTERACTION" />
 
+        <!-- Stub RecognitionService. Required by Android (current
+             Pixel OS) for the VoiceInteractionService registration
+             to be considered valid — without it the system rejects
+             the assistant selection with "Bad voice interaction
+             service: No recognitionService specified" and reverts
+             to None. Our stub immediately errors on
+             onStartListening so callers fall back to the default
+             SpeechRecognizer; Mythara's actual STT path uses
+             SpeechRecognizer directly and never touches this. -->
+        <service
+            android:name=".voice.MytharaRecognitionService"
+            android:exported="true"
+            android:label="@string/app_name">
+            <intent-filter>
+                <action android:name="android.speech.RecognitionService" />
+            </intent-filter>
+            <meta-data
+                android:name="android.speech"
+                android:resource="@xml/recognition_service" />
+        </service>
+
         <!-- Lumi always-listen service (M8.3a v2). Foreground service
              of type `microphone` — Vosk runs continuously, each final
              transcript is regex-checked for "Hey Lumi <query>", and on

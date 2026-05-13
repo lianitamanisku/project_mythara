@@ -10,17 +10,18 @@
     immediately finishes the session and lets MainActivity (already
     running via ACTION_ASSIST) own the UI.
 
-  - recognitionService: optional on Android 12+ — when omitted the
-    system uses the default RecognitionService. We don't ship our
-    own, so we don't declare one. Mythara's STT path uses
-    SpeechRecognizer (which picks the device default) regardless.
+  - recognitionService: a RecognitionService component. REQUIRED on
+    current Android (Pixel OS logs "Bad voice interaction service:
+    No recognitionService specified" and reverts the selection to
+    None when this is absent — that was the bug). Our stub
+    MytharaRecognitionService immediately errors so callers fall
+    back to the system default SpeechRecognizer; Mythara's actual
+    STT path doesn't go through this service.
 
   - supportsAssist: yes — Mythara handles `assist` invocations.
-  - supportsLaunchFromKeyguard: yes — onLaunchVoiceAssistFromKeyguard
-    in MytharaVoiceInteractionService launches MainActivity with
-    ACTION_ASSIST so the existing handler picks it up.
 -->
 <voice-interaction-service
     xmlns:android="http://schemas.android.com/apk/res/android"
     android:sessionService="com.mythara.voice.MytharaVoiceInteractionSessionService"
+    android:recognitionService="com.mythara.voice.MytharaRecognitionService"
     android:supportsAssist="true" />

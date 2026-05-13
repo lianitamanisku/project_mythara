@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Minimal recognition-service config. Required so the OS finds the
+  registration valid; we don't actually expose any locale capabilities
+  here because the stub immediately errors anyway and callers fall
+  back to the system default SpeechRecognizer.
+-->
+<recognition-service xmlns:android="http://schemas.android.com/apk/res/android" />
