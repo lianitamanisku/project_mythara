@@ -72,6 +72,7 @@ class LearningVault @Inject constructor(
     fun observeCount(): Flow<Int> = dao.observeCount()
     suspend fun listRecent(limit: Int = 50, offset: Int = 0): List<LearningEntity> = dao.listRecent(limit, offset)
     suspend fun countByTier(tier: Tier): Int = dao.countByTier(tier.code)
+    suspend fun listByTier(tier: Tier, limit: Int = 100): List<LearningEntity> = dao.listByTier(tier.code, limit)
     suspend fun unsyncedRecords(): List<LearningEntity> = dao.listUnsynced()
 
     suspend fun markSynced(id: String, now: Long = System.currentTimeMillis()) {

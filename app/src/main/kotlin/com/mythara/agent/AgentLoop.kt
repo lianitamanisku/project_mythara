@@ -41,6 +41,7 @@ class AgentLoop @Inject constructor(
     private val settings: SettingsStore,
     private val history: HistoryRepository,
     private val registry: ToolRegistry,
+    private val recall: SemanticRecall,
 ) {
 
     sealed interface Turn {
@@ -80,6 +81,15 @@ class AgentLoop @Inject constructor(
             MessageRow(tsMillis = System.currentTimeMillis(), role = "user", content = userText),
         )
 
+        // One-shot semantic recall over the user's latest message. The
+        // result lasts for the duration of this turn — never persisted
+        // to history, never re-computed per tool-use iteration.
+        val recalledFacts = recall.recall(userText)
+        val recallSystem: ChatMessage? = recall.render(recalledFacts)?.let { rendered ->
+            android.util.Log.d(TAG, "injecting ${recalledFacts.size} recalled facts")
+            ChatMessage(role = "system", content = rendered)
+        }
+
         val client = MiniMaxClient(apiKey = apiKey, region = snap.region)
         val streaming = StreamingChat(client)
 
@@ -89,7 +99,7 @@ class AgentLoop @Inject constructor(
         loop@ while (iter < MAX_ITERATIONS) {
             iter++
 
-            val prior: List<ChatMessage> = history.dao.listAll().map { row ->
+            val historyMessages: List<ChatMessage> = history.dao.listAll().map { row ->
                 ChatMessage(
                     role = row.role,
                     content = row.content,
@@ -98,6 +108,11 @@ class AgentLoop @Inject constructor(
                     name = row.name,
                 )
             }
+            // Prepend the recall system message (if any) so MiniMax sees
+            // durable memory before persisted chat history.
+            val prior: List<ChatMessage> = if (recallSystem != null) {
+                listOf(recallSystem) + historyMessages
+            } else historyMessages
 
             val req = ChatRequest(
                 model = snap.model,
@@ -195,6 +210,8 @@ class AgentLoop @Inject constructor(
             .getOrNull()
 
     companion object {
+        private const val TAG = "Mythara/Agent"
+
         /**
          * Safety cap on tool-use iterations per user turn. 8 is generous
          * for genuine multi-step tasks (most stop after 1–3) but stops a
