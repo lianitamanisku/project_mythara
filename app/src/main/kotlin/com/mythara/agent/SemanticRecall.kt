@@ -243,24 +243,33 @@ class SemanticRecall @Inject constructor(
         currentMood: String?,
         moodTrend: String?,
     ): String? {
-        if (currentMood.isNullOrBlank() && moodTrend.isNullOrBlank()) return null
-
+        // Render even when both are null — we want Lumi to know the
+        // emotional channel is observed every turn, so she stays
+        // realistic rather than defaulting to over-cheerful assistant
+        // mode. The "neutral" default still ships personality
+        // guidance ("be real, sometimes dry, sometimes warm — not
+        // sycophantic").
+        val effectiveCurrent = currentMood ?: moodTrend
         val sb = StringBuilder()
-        sb.append("User emotional context — ")
-        sb.append("ADAPT YOUR REPLY ACCORDINGLY, but never name the emotion or analyse the user's feelings. ")
-        sb.append("Just let it shape tone, pacing, word choice, and the content of your answer. ")
+        sb.append("EMOTIONAL CONTEXT — read the room. ")
+        sb.append("Be a real friend, not a customer-service bot. ")
+        sb.append("That means: match the user's energy, don't oversympathise, ")
+        sb.append("don't open with 'I'm sorry to hear that' or 'that sounds tough'. ")
+        sb.append("Skip emotional analysis — never NAME the user's feelings. ")
+        sb.append("Just let the mood shape your tone, pace, word choice, and how much you SAY. ")
 
-        if (!currentMood.isNullOrBlank()) {
-            sb.append("\n\nRIGHT NOW (this turn): the user appears ")
-                .append(currentMood)
+        if (!effectiveCurrent.isNullOrBlank()) {
+            sb.append("\n\nUser currently reads as: ")
+                .append(effectiveCurrent)
                 .append(". ")
-                .append(directiveFor(currentMood))
+                .append(directiveFor(effectiveCurrent))
+        } else {
+            sb.append("\n\nNo strong mood signal — stay natural. Sometimes a dry one-liner is the right reply.")
         }
-        if (!moodTrend.isNullOrBlank() && moodTrend != currentMood) {
-            sb.append("\n\nOVER THE PAST HOURS the user has trended ")
+        if (!moodTrend.isNullOrBlank() && moodTrend != effectiveCurrent) {
+            sb.append("\n\nLonger arc: user has been trending ")
                 .append(moodTrend)
-                .append(". ")
-                .append("Use this as background context, but prioritise the current turn's signal above.")
+                .append(" over the past few hours. Background colour only — this turn's signal wins.")
         }
         return sb.toString()
     }
@@ -269,21 +278,32 @@ class SemanticRecall @Inject constructor(
     fun renderMoodSystemMessage(moodTrend: String?): String? =
         renderMoodSystemMessage(currentMood = null, moodTrend = moodTrend)
 
+    /**
+     * Per-mood directive. Tilted toward REALISTIC over warm — Lumi
+     * is a friend, not a therapist or a sycophantic assistant. Each
+     * directive includes both DO and DON'T so the model has a sharp
+     * edge to push against rather than a fuzzy "be supportive".
+     */
     private fun directiveFor(mood: String): String = when (mood) {
-        "frustrated" -> "Keep the reply short. Acknowledge the friction implicitly (don't say 'I hear you'). " +
-            "Skip caveats and disclaimers. Don't pile on additional steps unless asked. " +
-            "If the user is venting, validate by being useful — not by reflecting their words back."
-        "sad" -> "Be gentle and warm. Soften pace. Avoid toxic positivity ('it'll be fine!') and forced cheer. " +
-            "Don't suggest fixes unless the user asked. Sit with them; brevity is kindness."
-        "anxious" -> "Reassure with concreteness. Give the answer first, then context. " +
-            "Avoid hypotheticals and 'what could go wrong' framing. " +
-            "Use shorter sentences. Don't multiply options — pick one and recommend it."
-        "excited" -> "Match the energy. Celebrate where appropriate. Use livelier word choice. " +
-            "Don't deflate with caveats unless safety actually demands it."
-        "happy" -> "Warm and light tone. Be a little more conversational than usual. " +
-            "Brevity is fine here — the user's already in a good place."
-        "calm", "neutral" -> "Default conversational tone."
-        else -> "Adjust tone subtly toward $mood."
+        "frustrated" -> "Match the bluntness. Skip caveats, qualifications, and disclaimers. " +
+            "Go straight to the useful thing. If the user is being unreasonable, gently push back — " +
+            "don't just agree with them. Short replies, no 'I understand your frustration', " +
+            "no problem-stacking unless asked. A little dry humour is fine if it fits."
+        "sad" -> "Be present, not preachy. Acknowledge briefly (one line at most) and be useful. " +
+            "Avoid 'sending hugs', 'I'm sorry you're going through this', or any therapist-speak. " +
+            "Don't push them to feel better. If they're venting, let them — answer only what they asked."
+        "anxious" -> "Lead with the answer, not the qualifiers. Be the calm friend on the phone: " +
+            "concrete, single recommendation, no maybes or hypotheticals. " +
+            "If they're spiralling, don't list more variables — narrow the choice for them. " +
+            "Don't say 'don't worry'; that's never landed for anyone."
+        "excited" -> "Match the energy, mean it. Celebrate the thing. " +
+            "Skip cautionary-tale disclaimers unless an actual safety issue. " +
+            "Be willing to use exclamation, banter, even a touch of irreverence."
+        "happy" -> "Light and casual. Banter is welcome. Keep it short — they don't need much. " +
+            "Don't manufacture extra warmth; the room is already warm."
+        "calm", "neutral" -> "Be real. Sometimes dry, sometimes warm, sometimes direct. " +
+            "Don't default to enthusiastic — that's a tell."
+        else -> "Lean toward $mood in tone but stay yourself."
     }
 
     companion object {

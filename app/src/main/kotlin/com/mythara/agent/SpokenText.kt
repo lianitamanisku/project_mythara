@@ -43,9 +43,34 @@ object SpokenText {
     private val MULTI_SPACE    = Regex("""[ \t]{2,}""")
     private val SOFT_TERMINATORS = setOf('.', '!', '?', ',', ':', ';')
 
-    fun forSpeech(input: String): String {
+    /**
+     * ElevenLabs inline audio tags: `[laugh]`, `[sighs]`,
+     * `[hmm]`, `[whisper]…[/whisper]`, etc. ElevenLabs renders these
+     * as real vocal expressions; Android TTS would read them
+     * literally ("open bracket laugh close bracket"), so we strip
+     * them on the Android path. Conservative pattern: matches
+     * lowercase letters + optional /, surrounded by square brackets,
+     * no nested brackets.
+     */
+    private val AUDIO_TAG = Regex("""\[/?[a-z][a-z\s'-]{0,20}\]""")
+
+    fun forSpeech(input: String): String = forSpeech(input, keepAudioTags = false)
+
+    /**
+     * @param keepAudioTags when true, ElevenLabs inline tags like
+     *   `[laugh]` or `[sigh]` survive — used on the EL path so the
+     *   hosted voice can render them as real vocal expressions. The
+     *   Android engine path strips them so it doesn't read them out.
+     */
+    fun forSpeech(input: String, keepAudioTags: Boolean): String {
         if (input.isBlank()) return ""
         var s = input
+
+        // -1. Audio tags — strip on the Android path (we'd hear
+        //     "open bracket laugh close bracket"); keep on EL.
+        if (!keepAudioTags) {
+            s = AUDIO_TAG.replace(s, " ")
+        }
 
         // 0. Drop emoji + emoji-modifier codepoints before any other pass.
         //    Android TTS otherwise reads their CLDR names ("face with tears

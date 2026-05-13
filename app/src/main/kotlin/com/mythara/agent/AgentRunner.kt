@@ -59,6 +59,7 @@ class AgentRunner @Inject constructor(
     private val tts: Tts,
     private val languageDetector: LanguageDetector,
     private val moodTracker: com.mythara.agent.mood.ChatMoodTracker,
+    private val settings: com.mythara.data.SettingsStore,
 ) {
     /**
      * Process-wide scope. SupervisorJob so one failing turn doesn't
@@ -183,14 +184,25 @@ class AgentRunner @Inject constructor(
         // Mirror the previous ChatViewModel.Finished handling: strip
         // <think> reasoning, the max-iter sentinel, markdown, then
         // truncate for TTS and pick the right locale for the reply.
+        // When ElevenLabs is the active route, KEEP audio tags so the
+        // hosted voice can render [laugh] / [sigh] / [hmm] as real
+        // vocal expressions. Tts.speak's Android fallback path then
+        // strips them on its own side; locale detection is run on
+        // the stripped form so the language picker doesn't choke on
+        // bracketed pseudo-words.
+        val snap = runCatching { settings.snapshot() }.getOrNull()
+        val keepAudioTags = snap?.useElevenLabs == true && !snap.elevenLabsKey.isNullOrBlank()
         val cleaned = Thinks.strip(turn.finalText)
             .removeSuffix(" [hit max iterations]")
-        val spoken = SpokenText.forSpeech(cleaned)
+        val spoken = SpokenText.forSpeech(cleaned, keepAudioTags = keepAudioTags)
         val toSpeak = SpokenText.truncateForSpeech(spoken)
         val nosurface = cleaned.trim()
             .equals(AgentLoop.NOSURFACE_TOKEN, ignoreCase = true)
         if (toSpeak.isBlank() || nosurface) return
-        val locale = runCatching { languageDetector.identifyLocale(toSpeak) }.getOrNull()
+        // For language detection, always feed a tag-free string so
+        // ML Kit doesn't get confused by '[laugh]' style markers.
+        val forDetection = if (keepAudioTags) SpokenText.forSpeech(cleaned, keepAudioTags = false) else toSpeak
+        val locale = runCatching { languageDetector.identifyLocale(forDetection) }.getOrNull()
         tts.speak(toSpeak, locale, turn.userMoodTrend)
     }
 

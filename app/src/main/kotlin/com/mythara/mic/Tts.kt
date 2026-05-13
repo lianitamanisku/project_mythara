@@ -127,9 +127,15 @@ class Tts @Inject constructor(
     private fun speakViaAndroid(text: String, locale: Locale?, userMoodTrend: String?) {
         if (engine == null) init()
         if (!ready) return
+        // Strip any ElevenLabs audio tags ([laugh], [sigh], etc.) — the
+        // model includes them when the EL route is enabled, but on the
+        // Android fallback path the engine would read them literally
+        // ("open bracket laugh close bracket"). EL → keep, Android → strip.
+        val cleaned = com.mythara.agent.SpokenText.forSpeech(text, keepAudioTags = false)
+        if (cleaned.isBlank()) return
         locale?.let { setLanguageIfSupported(it) }
         applyProsody(userMoodTrend)
-        engine?.speak(text, TextToSpeech.QUEUE_ADD, null, UUID.randomUUID().toString())
+        engine?.speak(cleaned, TextToSpeech.QUEUE_ADD, null, UUID.randomUUID().toString())
     }
 
     private suspend fun speakViaElevenLabs(

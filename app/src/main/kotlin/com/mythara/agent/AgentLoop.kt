@@ -125,25 +125,49 @@ class AgentLoop @Inject constructor(
         // settings). currentMood wins when present.
         val effectiveMood = currentMood ?: moodTrend
 
-        // Voice-input system prompt. When the user spoke (Pixel Buds
-        // tap, mic button, continuous voice chat), force a much shorter
-        // and more conversational response. Long paragraphs and
-        // markdown lists are unbearable to listen to — the TTS layer
-        // also caps length on the spoken-text side, but pushing the
-        // brevity all the way up to the model is what produces a
-        // genuinely natural answer rather than a clipped one.
-        val voiceSystem: ChatMessage? = if (fromVoice) {
+        // Conversational system prompt — applied to EVERY turn now,
+        // not just voice. Lumi's whole personality is voice-first; a
+        // long markdown-heavy answer is wrong even when typed because
+        // the user may have spoken queries upstream or downstream and
+        // we want consistency. Length floor is the same regardless of
+        // input modality; if the user explicitly asks for more detail
+        // ("give me the full breakdown"), the model can override.
+        val voiceSystem: ChatMessage = ChatMessage(
+            role = "system",
+            content =
+                "Reply like a friend texting, not an assistant generating a deliverable. " +
+                    "Constraints every turn: " +
+                    "(1) 1–2 short sentences, max ~40 words. Longer ONLY if the user explicitly asked for detail. " +
+                    "(2) Conversational tone — no formal openers ('Sure!', 'Certainly!', 'I'd be happy to'), no sign-offs ('Let me know if you need anything else'). " +
+                    "(3) NEVER use markdown, lists, headers, code blocks, URLs, or bullets in spoken-style replies. " +
+                    "(4) Numbers + symbols spoken-out ('5%' → 'five percent'). Drop URLs entirely unless the user asked for one. " +
+                    "(5) If the full answer is long, lead with the headline and offer to go deeper ('want me to dig in?'). " +
+                    "(6) Real conversation has variety — sometimes a one-liner, sometimes a question back, sometimes 'I don't know'. Match the mood (see emotional-context message).",
+        )
+
+        // ElevenLabs audio tags. When the user has the EL TTS route
+        // enabled, the model can embed inline cues that EL renders
+        // as actual vocal expressions: [laugh], [sigh], [hmm],
+        // [chuckle], [whisper]…[/whisper]. Persisted to chat history
+        // verbatim; Android TTS strips them at speak-time so they
+        // don't get read literally.
+        val elevenLabsEnabled = !snap.elevenLabsKey.isNullOrBlank() && snap.useElevenLabs
+        val ttsSystem: ChatMessage? = if (elevenLabsEnabled) {
             ChatMessage(
                 role = "system",
                 content =
-                    "The user is speaking to you, not typing. Your reply will be read aloud. " +
-                        "Constraints for this turn: " +
-                        "(1) Reply in 1–2 short sentences, max 40 words. " +
-                        "(2) Conversational tone, like a friend texting back — no formal greetings, no preamble. " +
-                        "(3) NEVER use markdown, lists, code blocks, headers, URLs, or bullets. " +
-                        "(4) Skip filler ('Sure!', 'I'd be happy to', 'Let me know if you need anything else'). " +
-                        "(5) If the full answer would be longer, give the headline now and offer to elaborate ('want more detail?'). " +
-                        "(6) Spell out numbers and symbols as they'd be spoken ('5%' → 'five percent', 'http://x' → drop URLs entirely).",
+                    "Your reply will be synthesised by ElevenLabs. You can — and should, when appropriate — " +
+                        "include audio tags inline that ElevenLabs renders as real vocal expressions:\n" +
+                        "  [laugh] / [laughs] — genuine quick laugh, for a real moment of amusement\n" +
+                        "  [chuckle] — softer, knowing chuckle\n" +
+                        "  [sigh] / [sighs] — resignation, mild exasperation, or relief\n" +
+                        "  [hmm] — thoughtful pause before answering\n" +
+                        "  [exhale] — settle-down beat before a difficult thought\n" +
+                        "Use sparingly — at most one tag per reply, and only when it actually fits the moment. " +
+                        "A [laugh] on a serious question is jarring; an unprompted [sigh] reads as judgmental. " +
+                        "Use them to BE more human, not to perform humanity. " +
+                        "Tags go inline with your text (e.g. '[hmm] yeah, that's tricky — try the second one'); " +
+                        "no nesting, no closing tags except for [whisper]…[/whisper] which IS paired.",
             )
         } else {
             null
@@ -203,15 +227,15 @@ class AgentLoop @Inject constructor(
             // Sanitise on every send so we self-heal.
             val historyMessages: List<ChatMessage> = sanitizeHistory(rawHistory)
             // Prepend system messages. Order matters: most-specific
-            // constraints first (voice / notif framing), then richer
-            // context (mood, recall), then persisted history. MiniMax
-            // weights earlier system messages more strongly in our
-            // experience, so the "be brief" voice constraint should
-            // win when present.
+            // constraints first (voice + audio tags), then mood
+            // framing, then notif if applicable, then recall, then
+            // persisted history. MiniMax weights earlier system
+            // messages more strongly in our experience.
             val prior: List<ChatMessage> = buildList {
-                if (voiceSystem != null) add(voiceSystem)
-                if (notifSystem != null) add(notifSystem)
+                add(voiceSystem) // always — conversational style is the default
+                if (ttsSystem != null) add(ttsSystem)
                 if (moodSystem != null) add(moodSystem)
+                if (notifSystem != null) add(notifSystem)
                 if (recallSystem != null) add(recallSystem)
                 addAll(historyMessages)
             }
