@@ -216,9 +216,9 @@
         <!-- Agent keepalive foreground service. AgentRunner spins this
              up whenever there's active agent work (an in-flight turn,
              a voice trigger, continuous-mic mode). Owns the persistent
-             notification + claims the FGS `microphone` slot so:
+             notification + claims an FGS slot so:
               - Android 12+ allows background mic capture for STT /
-                continuous-mode / wake-word collectors
+                continuous-mode / wake-word collectors (microphone type)
               - the OS keeps the Mythara process alive through
                 screen-off and recent-apps dismissal long enough for
                 the turn to complete and for TTS to finish speaking
@@ -226,19 +226,33 @@
                 notification to come back to the chat surface
              AgentRunner stops the service after IDLE_TIMEOUT_MS of no
              active turns so the notification doesn't sit there
-             forever when nothing's happening. -->
+             forever when nothing's happening.
+
+             Dual type `microphone|specialUse` — Android 16 tightened
+             FGS-type enforcement and throws SecurityException (which
+             crashes the process) when starting type=microphone before
+             RECORD_AUDIO is runtime-granted. AgentForegroundService
+             .startInForeground picks `microphone` when mic is granted,
+             `specialUse` otherwise (notification-driven turns that
+             don't need to capture audio). -->
         <service
             android:name=".services.AgentForegroundService"
             android:exported="false"
-            android:foregroundServiceType="microphone"
-            tools:targetApi="34" />
+            android:foregroundServiceType="microphone|specialUse"
+            tools:targetApi="34">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="persistent assistant keepalive for in-flight agent turns" />
+        </service>
 
         <!-- Lumi always-listen service (M8.3a v2). Foreground service
              of type `microphone` — Vosk runs continuously, each final
              transcript is regex-checked for "Hey Lumi <query>", and on
              match the query is funnelled into ChatViewModel. Single
              AudioRecord client; mutually exclusive with
-             ObserveForegroundService at the hardware layer. -->
+             ObserveForegroundService at the hardware layer. Mic-only,
+             so the LumiListenerService is itself gated on the
+             RECORD_AUDIO grant in code — see LumiListenerStore. -->
         <service
             android:name=".wake.LumiListenerService"
             android:exported="false"

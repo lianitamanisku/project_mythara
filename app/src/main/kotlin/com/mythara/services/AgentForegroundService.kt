@@ -1,5 +1,6 @@
 package com.mythara.services
 
+import android.Manifest
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -7,11 +8,13 @@ import android.app.PendingIntent
 import android.app.Service
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.content.pm.ServiceInfo
 import android.os.Build
 import android.os.IBinder
 import android.util.Log
 import androidx.core.app.NotificationCompat
+import androidx.core.content.ContextCompat
 import com.mythara.MainActivity
 import com.mythara.R
 import dagger.hilt.android.AndroidEntryPoint
@@ -72,17 +75,38 @@ class AgentForegroundService : Service() {
 
     private fun startInForeground() {
         val notification = buildNotification()
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            // Android 10+ requires the FGS type at startForeground
-            // time too. `microphone` is what unlocks background mic
-            // capture for our SpeechRecognition + continuous loops.
-            startForeground(
-                NOTIFICATION_ID,
-                notification,
-                ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE,
-            )
-        } else {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
             startForeground(NOTIFICATION_ID, notification)
+            return
+        }
+        // Android 14+ (target SDK 34+) tightened the FGS-type
+        // contract: starting with type=`microphone` throws
+        // SecurityException unless RECORD_AUDIO is currently granted.
+        // The user can hit a notification-driven turn (NotificationListener
+        // → AgentRunner → start(this)) BEFORE they've granted mic in the
+        // onboarding flow — Android 16 turns that throw into a process
+        // crash. So we pick the type at runtime: `microphone` when mic
+        // is granted (preserves background mic capture for STT /
+        // continuous loops), `specialUse` otherwise (still a valid
+        // foreground service for keepalive + the persistent notification,
+        // just without the mic-capture privilege the user hasn't
+        // granted anyway).
+        val hasMic = ContextCompat.checkSelfPermission(
+            this, Manifest.permission.RECORD_AUDIO,
+        ) == PackageManager.PERMISSION_GRANTED
+        val type = if (hasMic) {
+            ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE
+        } else {
+            ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE
+        }
+        runCatching {
+            startForeground(NOTIFICATION_ID, notification, type)
+        }.onFailure { e ->
+            // Belt-and-braces: if a future Android tightens specialUse
+            // too, fall back to plain startForeground so the keepalive
+            // still lands rather than crashing the whole app.
+            Log.w(TAG, "startForeground type=$type rejected (${e.message}); retrying typeless")
+            runCatching { startForeground(NOTIFICATION_ID, notification) }
         }
     }
 
