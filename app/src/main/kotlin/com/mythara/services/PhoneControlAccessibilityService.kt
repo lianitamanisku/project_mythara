@@ -94,6 +94,134 @@ class PhoneControlAccessibilityService : AccessibilityService() {
     }
 
     /**
+     * Find a node whose text contains [text] (case-insensitive) and
+     * tap its centre. Walks the foreground window tree;
+     * findAccessibilityNodeInfosByText handles deeply-nested matches.
+     * Returns true on success, false if no node matched OR the
+     * gesture was rejected. Used by the skill runner so multi-step
+     * automations don't depend on pixel coordinates.
+     */
+    suspend fun tapNodeWithText(text: String): Boolean {
+        val target = findFirstNodeWithText(text) ?: return false
+        return tapNode(target)
+    }
+
+    /**
+     * Tap the first node whose `contentDescription` matches [desc]
+     * (case-insensitive substring). For icon buttons that have no
+     * visible text — send arrows, kebab menus, etc.
+     */
+    suspend fun tapNodeWithDesc(desc: String): Boolean {
+        val target = findFirstNodeWithDesc(desc) ?: return false
+        return tapNode(target)
+    }
+
+    /**
+     * Tap the first node whose Android view-id resource name ends
+     * with the given suffix. Tolerant of package prefixing — model
+     * can pass "send_button" and we match both
+     * "com.whatsapp:id/send_button" and bare "send_button".
+     */
+    suspend fun tapNodeWithId(id: String): Boolean {
+        val target = findFirstNodeWithId(id) ?: return false
+        return tapNode(target)
+    }
+
+    /**
+     * Is there any node on screen whose text contains [text]?
+     * Used by skill-runner verify steps.
+     */
+    fun isTextVisible(text: String): Boolean {
+        val root = rootInActiveWindow ?: return false
+        val hits = runCatching { root.findAccessibilityNodeInfosByText(text) }.getOrNull()
+        val found = !hits.isNullOrEmpty()
+        hits?.forEach { runCatching { it.recycle() } }
+        runCatching { root.recycle() }
+        return found
+    }
+
+    private fun findFirstNodeWithText(text: String): AccessibilityNodeInfo? {
+        val root = rootInActiveWindow ?: return null
+        val hits = runCatching { root.findAccessibilityNodeInfosByText(text) }
+            .getOrNull()
+            .orEmpty()
+        val match = hits.firstOrNull { isLikelyTappable(it) } ?: hits.firstOrNull()
+        // Don't recycle the match (caller owns); recycle root + siblings.
+        hits.forEach { if (it !== match) runCatching { it.recycle() } }
+        runCatching { root.recycle() }
+        return match
+    }
+
+    private fun findFirstNodeWithDesc(desc: String): AccessibilityNodeInfo? {
+        val root = rootInActiveWindow ?: return null
+        val needle = desc.lowercase()
+        val match = walkAndFind(root) { node ->
+            node.contentDescription?.toString()?.lowercase()?.contains(needle) == true
+        }
+        if (match !== root) runCatching { root.recycle() }
+        return match
+    }
+
+    private fun findFirstNodeWithId(id: String): AccessibilityNodeInfo? {
+        val root = rootInActiveWindow ?: return null
+        val match = walkAndFind(root) { node ->
+            val rid = node.viewIdResourceName ?: return@walkAndFind false
+            rid.endsWith("/$id") || rid == id
+        }
+        if (match !== root) runCatching { root.recycle() }
+        return match
+    }
+
+    private fun walkAndFind(
+        node: AccessibilityNodeInfo,
+        predicate: (AccessibilityNodeInfo) -> Boolean,
+    ): AccessibilityNodeInfo? {
+        if (predicate(node)) return node
+        for (i in 0 until node.childCount) {
+            val child = node.getChild(i) ?: continue
+            val match = walkAndFind(child, predicate)
+            if (match != null) {
+                // recycle siblings we didn't pick
+                if (child !== match) runCatching { child.recycle() }
+                return match
+            }
+            runCatching { child.recycle() }
+        }
+        return null
+    }
+
+    private fun isLikelyTappable(node: AccessibilityNodeInfo): Boolean {
+        return node.isClickable || node.isLongClickable || node.parent?.isClickable == true
+    }
+
+    /**
+     * Dispatch a tap on the centre of [node]'s bounds-on-screen rect.
+     * Some nodes report tap-handling at their PARENT — fall back to
+     * walking up if [node] itself isn't clickable.
+     */
+    private suspend fun tapNode(node: AccessibilityNodeInfo): Boolean {
+        val effective = if (node.isClickable) node else walkUpForClickable(node) ?: node
+        val rect = android.graphics.Rect()
+        effective.getBoundsInScreen(rect)
+        runCatching { effective.recycle() }
+        if (rect.isEmpty) return false
+        return tap(rect.exactCenterX(), rect.exactCenterY())
+    }
+
+    private fun walkUpForClickable(node: AccessibilityNodeInfo): AccessibilityNodeInfo? {
+        var cursor: AccessibilityNodeInfo? = node.parent
+        var hops = 0
+        while (cursor != null && hops < 6) {
+            if (cursor.isClickable) return cursor
+            val next = cursor.parent
+            runCatching { cursor.recycle() }
+            cursor = next
+            hops++
+        }
+        return null
+    }
+
+    /**
      * Find the currently-focused editable node and set its text via
      * AccessibilityNodeInfo.ACTION_SET_TEXT. Returns true if a target
      * node was found AND the action succeeded. The model can use
