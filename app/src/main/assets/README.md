@@ -1,64 +1,66 @@
 # Mythara wake-word assets
 
-This directory holds the **Lumi** wake-word file plus a short note on
-the AccessKey path. The build doesn't crash without the file — the
-Settings panel shows a "missing" state and the toggle is inert — but
-you need it for actual on-device wake detection.
+This directory ships the three ONNX files openWakeWord needs for
+on-device wake detection. **They are committed in the repo**, so a
+fresh clone + build "just works" — no signup, no Colab, no
+configuration. Total disk cost: ~3.5MB.
 
-## What goes here
+## Files
 
-| Filename       | Size  | Source                                  |
-|----------------|-------|-----------------------------------------|
-| `Lumi_en.ppn`  | ~10K  | exported from console.picovoice.ai      |
+| Filename                | Size  | Role                                  |
+|-------------------------|-------|---------------------------------------|
+| `melspectrogram.onnx`   | ~1.0M | audio → mel-spectrogram features      |
+| `embedding_model.onnx`  | ~1.3M | mel-spec → speech embeddings          |
+| `hey_jarvis_v0.1.onnx`  | ~1.2M | embeddings → "Hey Jarvis" probability |
 
-## Generating `Lumi_en.ppn`
+All three come from
+[openWakeWord v0.5.1 release assets](https://github.com/dscripka/openWakeWord/releases/tag/v0.5.1).
+Apache 2.0 licensed.
 
-Picovoice's console handles the training side; you don't need a GPU,
-Colab, or Python. Free-tier accounts can generate custom wake words
-for personal sideload use.
+## Why "Hey Jarvis"?
 
-1. Sign up at **https://console.picovoice.ai** (free tier).
-2. From the console dashboard, open **Porcupine** → **Train Wake Word**.
-3. Type the phrase: `Lumi` (case doesn't matter to the trainer; the
-   pronunciation you described — "Loomi" — is the natural English
-   reading of these four letters).
-4. Pick platform **Android**, language **English**.
-5. Click **Train** — finishes in ~30 seconds.
-6. Download the zip; inside you'll find a file named something like
-   `Lumi_en_android_v3_0_0.ppn`.
-7. **Rename it to `Lumi_en.ppn`** and drop it in this directory next
-   to this README.
-8. Rebuild the debug APK (`./gradlew :app:assembleDebug`) and reinstall.
+openWakeWord publishes a small catalogue of pre-trained wake words:
+`alexa`, `hey_jarvis`, `hey_mycroft`, `weather`, `timer`. We picked
+**hey_jarvis** because:
 
-## The AccessKey
+- Pop-culture recognisable, comfortable to say aloud.
+- Low collision risk vs nearby commercial assistants (`alexa` would
+  fight Echo devices in the room; `hey_mycroft` is niche).
+- Pre-trained model has solid recall — openWakeWord reports F1 > 0.9
+  on the standard test set at threshold 0.5.
 
-Porcupine needs a one-time **AccessKey** to initialise at runtime. From
-the same console:
+The trigger phrase is decoupled from Mythara's agent identity: when
+"Hey Jarvis" fires, **Lumi** takes over (the chat surface, system
+prompt, TTS voice — all branded as Lumi). Think of "Hey Jarvis" as
+the on-ramp, not the conversation partner.
 
-1. Click your profile name top-right → **AccessKey**.
-2. Copy the displayed key (~50 chars, looks like base64).
-3. In Mythara: main Settings → 'Lumi' wake word panel → paste into the
-   AccessKey field → tap **save key**. It's Tink-encrypted at rest.
+## Swapping the wake word
 
-The Picovoice SDK uses the key locally for signature validation; the
-runtime works without internet once the key is set.
+Want a different phrase? Two options:
 
-## Verifying
+### Use another pre-trained model
 
-After install + key paste:
+1. Download from the openWakeWord release page — e.g.
+   [hey_mycroft_v0.1.onnx](https://github.com/dscripka/openWakeWord/releases/download/v0.5.1/hey_mycroft_v0.1.onnx).
+2. Drop next to the other files here.
+3. In `LumiWakeWordController.kt` update the `WAKE_WORD_FILE` and
+   `TRIGGER_PHRASE` constants to match.
+4. Rebuild.
 
-- Open Mythara → main Settings → "Lumi wake word" panel.
-- Grant RECORD_AUDIO when prompted.
-- Toggle ON. Status pill should show `● listening for 'Lumi'`.
-- Speak the phrase — fires log to `Mythara/Wake` in logcat with an
-  index (always 0 for our single keyword) and timestamp.
+### Train a custom wake word (e.g. "Hey Lumi")
 
-## Why Porcupine over openWakeWord?
+This is the original M8.3a path — still works if you change your mind
+later:
 
-We tried openWakeWord first (Apache 2.0, fully open) but training a
-custom phrase needs a ~45-minute Colab run plus three bundled ONNX
-files. Porcupine's free tier delivers the same result with a 30-second
-console export, one .ppn file, and a paste-once AccessKey. Trade-off:
-soft dependency on Picovoice for the SDK + AccessKey, but the runtime
-itself is fully on-device. The AccessKey lives Tink-encrypted at rest;
-it's never sent anywhere by Mythara's code path.
+1. Open openWakeWord's [automatic_model_training.ipynb](https://github.com/dscripka/openWakeWord/blob/main/notebooks/automatic_model_training.ipynb) on Colab.
+2. Set `target_phrase = "Hey Lumi"`. ~45 min on a Colab T4.
+3. Download the resulting `.onnx`, drop it here, point the controller
+   constants at it, rebuild.
+
+## Verifying the default install
+
+1. After install: Mythara → main Settings → "wake word" panel.
+2. Grant RECORD_AUDIO when prompted.
+3. Toggle ON. Status pill should show `● listening for 'Hey Jarvis'`.
+4. Speak the phrase. Fires log to `Mythara/Wake` in logcat with the
+   model name + score + timestamp.

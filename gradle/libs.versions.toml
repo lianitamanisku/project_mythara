@@ -41,11 +41,13 @@ mediapipeText = "0.10.14"
 # when we move to Kotlin 2.3+ (which would require AGP 8.9+ as well).
 litertlm = "0.8.0"
 mlkitLanguageId = "17.0.6"
-# Picovoice Porcupine — commercial on-device wake-word engine, free tier
-# covers personal sideload use. Trade-off vs openWakeWord: cleaner SDK,
-# single .ppn file (no separate mel-spec / embedding bundles), but needs
-# a one-time AccessKey from picovoice.ai (Tink-encrypted in the app).
-porcupine = "4.0.0"
+# openWakeWord-Android (Re-MENTIA Kotlin wrapper around openWakeWord's
+# ONNX runtime). Apache 2.0, no signup, no AccessKey. We ship the
+# pre-trained `hey_jarvis_v0.1.onnx` (committed in assets/) — wake
+# phrase is "Hey Jarvis" but the agent's identity in chat is still
+# Lumi. The 3-stage pipeline (melspec → embedding → classifier) is
+# bundled entirely in-APK; nothing user-provided required.
+openwakeword = "0.1.5"
 
 # Deferred — added back when their milestone lands:
 #   camerax  → M5 (take_photo tool)
@@ -125,11 +127,11 @@ litertlm-android = { group = "com.google.ai.edge.litertlm", name = "litertlm-and
 #   2. cross-checking / fallback to the active Vosk language tag
 google-mlkit-language-id = { group = "com.google.mlkit", name = "language-id", version.ref = "mlkitLanguageId" }
 
-# Picovoice Porcupine — on-device wake-word detection. Custom .ppn
-# wake-word files generated via console.picovoice.ai are bundled in
-# `app/src/main/assets/`. PorcupineManager owns audio capture internally,
-# so we don't need our own AudioRecord on the wake-word path.
-picovoice-porcupine-android = { group = "ai.picovoice", name = "porcupine-android", version.ref = "porcupine" }
+# openWakeWord (Re-MENTIA Kotlin wrapper) — on-device wake-word
+# detection via ONNX Runtime. Apache 2.0, no signup, no AccessKey.
+# Three ONNX files (`melspectrogram.onnx`, `embedding_model.onnx`,
+# `hey_jarvis_v0.1.onnx`) ship pre-bundled in `app/src/main/assets/`.
+rementia-openwakeword = { group = "xyz.rementia", name = "openwakeword", version.ref = "openwakeword" }
 
 # Biometric / device-credential unlock at app entry
 androidx-biometric = { group = "androidx.biometric", name = "biometric", version.ref = "biometric" }

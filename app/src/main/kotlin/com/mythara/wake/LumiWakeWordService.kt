@@ -56,13 +56,10 @@ class LumiWakeWordService : Service() {
         super.onCreate()
         ensureChannel()
         startForeground(NOTIF_ID, buildNotification(), serviceTypeForFgs())
-        // Controller start is suspend (AccessKey lives in DataStore) so
-        // we kick it off the service's CoroutineScope. The status flow
-        // tells the UI what happened.
-        scope.launch { controller.start() }
+        controller.start()
         wakeRelay = scope.launch {
             controller.wakes.collect { event ->
-                Log.d(TAG, "relay wake → app: ${event.phrase} (idx=${event.keywordIndex})")
+                Log.d(TAG, "relay wake → app: trigger='${event.triggerPhrase}' agent='${event.agentName}' score=${event.score}")
                 Wakes.broadcast.tryEmit(event)
             }
         }
@@ -119,8 +116,8 @@ class LumiWakeWordService : Service() {
         )
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(android.R.drawable.ic_btn_speak_now)
-            .setContentTitle("Mythara")
-            .setContentText("Listening for 'Lumi'")
+            .setContentTitle("Lumi (Mythara)")
+            .setContentText("Listening for 'Hey Jarvis'")
             .setOngoing(true)
             .setPriority(NotificationCompat.PRIORITY_LOW)
             .setContentIntent(tap)
