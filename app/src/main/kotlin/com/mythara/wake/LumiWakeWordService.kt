@@ -117,7 +117,7 @@ class LumiWakeWordService : Service() {
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(android.R.drawable.ic_btn_speak_now)
             .setContentTitle("Lumi (Mythara)")
-            .setContentText("Listening for 'Hey Jarvis'")
+            .setContentText("Listening for 'Hey Mycroft'")
             .setOngoing(true)
             .setPriority(NotificationCompat.PRIORITY_LOW)
             .setContentIntent(tap)

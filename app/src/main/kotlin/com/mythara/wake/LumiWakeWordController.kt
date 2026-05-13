@@ -29,21 +29,21 @@ import javax.inject.Singleton
  *    open the chat surface with mic primed when the trigger fires
  *
  * **Wake word vs. agent identity.** The on-device detector is trained
- * on **"Hey Jarvis"** (openWakeWord's pre-trained model — pop-culture
- * friendly, low collision with commercial assistants, Apache 2.0, zero
- * signup). The agent that takes over after the trigger is still named
- * **Lumi**: the chat surface, system prompt, identity branding all use
- * Lumi. Saying "Hey Jarvis" is just the on-ramp.
+ * on **"Hey Mycroft"** (openWakeWord's pre-trained model — Apache 2.0,
+ * zero signup, niche enough to avoid collisions with commercial
+ * assistants in the room). The agent that takes over after the trigger
+ * is still named **Lumi**: the chat surface, system prompt, identity
+ * branding all use Lumi. Saying "Hey Mycroft" is just the on-ramp.
  *
  * Picking a different wake word later is a one-line change (swap
- * [WAKE_WORD_FILE] for `alexa_v0.1.onnx`, `hey_mycroft_v0.1.onnx`, or
+ * [WAKE_WORD_FILE] for `alexa_v0.1.onnx`, `hey_jarvis_v0.1.onnx`, or
  * a Colab-trained custom model). See the openWakeWord releases page.
  *
  * **Asset contract.** Three ONNX files ship pre-bundled in
  * `app/src/main/assets/`:
  *   - `melspectrogram.onnx`     (shared, ~1MB)
  *   - `embedding_model.onnx`    (shared, ~1.3MB)
- *   - `hey_jarvis_v0.1.onnx`    (classifier, ~1.2MB)
+ *   - `hey_mycroft_v0.1.onnx`   (classifier, ~840K)
  *
  * If any are missing the controller stays in [State.MissingAsset] and
  * never touches AudioRecord.
@@ -102,13 +102,15 @@ class LumiWakeWordController @Inject constructor(
                 models = listOf(
                     WakeWordModel(
                         name = AGENT_NAME,         // "Lumi" — what we surface to consumers
-                        modelPath = WAKE_WORD_FILE, // "hey_jarvis_v0.1.onnx" — what we listen for
+                        modelPath = WAKE_WORD_FILE, // "hey_mycroft_v0.1.onnx" — what we listen for
                         // Conservative threshold for the pre-trained
-                        // "Hey Jarvis" model — 0.5 is the SDK default,
+                        // "Hey Mycroft" model — 0.5 is the SDK default,
                         // openWakeWord reports best F1 around 0.5-0.6.
                         // Bump to 0.6 to reduce false positives at the
                         // cost of slightly missing soft triggers; the
-                        // user can always retry.
+                        // user can always retry. (Real-world: 0.88-0.998
+                        // scores tested on a Pixel 9 with hey_jarvis;
+                        // hey_mycroft is similar in calibration.)
                         threshold = 0.6f,
                     ),
                 ),
@@ -170,7 +172,7 @@ class LumiWakeWordController @Inject constructor(
         private const val TAG = "Mythara/Wake"
 
         /** The phrase a user actually says aloud. */
-        const val TRIGGER_PHRASE = "Hey Jarvis"
+        const val TRIGGER_PHRASE = "Hey Mycroft"
 
         /** The on-screen identity that takes over after the trigger fires. */
         const val AGENT_NAME = "Lumi"
@@ -180,13 +182,13 @@ class LumiWakeWordController @Inject constructor(
         private const val EMBED_MODEL = "embedding_model.onnx"
 
         /**
-         * The classifier model that turns embeddings into "Hey Jarvis" or
-         * "anything else" probabilities. Swap for another openWakeWord
-         * pre-trained .onnx (alexa, hey_mycroft, weather, timer) if you
+         * The classifier model that turns embeddings into "Hey Mycroft"
+         * or "anything else" probabilities. Swap for another openWakeWord
+         * pre-trained .onnx (alexa, hey_jarvis, weather, timer) if you
          * prefer a different trigger — also update [TRIGGER_PHRASE]
          * to match.
          */
-        private const val WAKE_WORD_FILE = "hey_jarvis_v0.1.onnx"
+        private const val WAKE_WORD_FILE = "hey_mycroft_v0.1.onnx"
 
         private val REQUIRED_ASSETS = listOf(MELSPEC_MODEL, EMBED_MODEL, WAKE_WORD_FILE)
     }
