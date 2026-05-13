@@ -42,6 +42,8 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import com.mythara.secret.observe.ObserveState
 import com.mythara.secret.observe.embed.EmbeddingsModelStore
 import com.mythara.secret.observe.vosk.SpeakerModelStore
+import com.mythara.ui.secret.speaker.SpeakerEnrollmentDialog
+import com.mythara.ui.secret.speaker.SpeakerEnrollmentViewModel
 import com.mythara.secret.observe.extract.gemma.GemmaModelStore
 import com.mythara.secret.observe.vosk.VoskModelStore
 import com.mythara.ui.theme.Glyph
@@ -428,11 +430,79 @@ fun SecretSettingsScreen(
             }
             Spacer(Modifier.height(6.dp))
             Text(
-                text = "${Glyph.AccentBar} once downloaded, every Observe utterance also gets a 128-dim speaker vector. M8.4 part 2 will let you enrol named speakers and tag transcripts with `speaker:<name>` facets.",
+                text = "${Glyph.AccentBar} once downloaded, every Observe utterance also gets a 128-dim speaker vector. Enrol speakers below to start tagging transcripts with `speaker:<name>` facets.",
                 color = MytharaColors.FgDim,
                 style = MaterialTheme.typography.bodySmall.copy(letterSpacing = 1.sp),
             )
         }
+
+        Spacer(Modifier.height(14.dp))
+
+        // Speakers list + enrollment dialog.
+        val enrollVm: SpeakerEnrollmentViewModel = hiltViewModel()
+        val enrolledSpeakers by enrollVm.enrolled.collectAsState()
+        Panel("speakers") {
+            if (enrolledSpeakers.isEmpty()) {
+                Text(
+                    text = "${Glyph.CircleOutline} no speakers enrolled yet.",
+                    color = MytharaColors.FgMute,
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+            } else {
+                enrolledSpeakers.forEach { sp ->
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "${Glyph.DiamondFilled} ${sp.name}",
+                                color = MytharaColors.Fg,
+                                style = MaterialTheme.typography.bodyMedium,
+                            )
+                            Text(
+                                text = buildString {
+                                    append("${sp.enrollmentSampleCount} sample(s)")
+                                    if (sp.matchCount > 0) {
+                                        append(" · matched ${sp.matchCount}×")
+                                        if (sp.lastMatchedAtMs > 0) {
+                                            val ago = (System.currentTimeMillis() - sp.lastMatchedAtMs) / 60_000L
+                                            when {
+                                                ago < 1 -> append(" · just now")
+                                                ago < 60 -> append(" · ${ago}m ago")
+                                                ago < 1440 -> append(" · ${ago / 60}h ago")
+                                                else -> append(" · ${ago / 1440}d ago")
+                                            }
+                                        }
+                                    }
+                                },
+                                color = MytharaColors.FgDim,
+                                style = MaterialTheme.typography.bodySmall,
+                            )
+                        }
+                        TextButton(onClick = { enrollVm.delete(sp.id) }) {
+                            Text(Glyph.Cross, color = MytharaColors.Sriracha)
+                        }
+                    }
+                }
+            }
+            Spacer(Modifier.height(8.dp))
+            Button(
+                onClick = { enrollVm.openDialog() },
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = MytharaColors.Charple, contentColor = MytharaColors.Fg,
+                ),
+            ) { Text("${Glyph.Arrow} enrol a speaker") }
+            Spacer(Modifier.height(6.dp))
+            Text(
+                text = "${Glyph.AccentBar} every Observe transcript that matches an enrolled voice (cosine ≥ 0.5) gets tagged with `speaker:<name>`. Enrol the same name again to refine the reference — samples are weighted-averaged with what's already stored.",
+                color = MytharaColors.FgDim,
+                style = MaterialTheme.typography.bodySmall,
+            )
+        }
+        SpeakerEnrollmentDialog(vm = enrollVm)
 
         Spacer(Modifier.height(14.dp))
 
