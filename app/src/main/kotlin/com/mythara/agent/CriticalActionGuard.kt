@@ -119,6 +119,7 @@ class CriticalActionGuard @Inject constructor(
             "get_battery",
             "get_location",
             "read_screen",
+            "screenshot_view",
             "read_notifications",
             "list_dismissed_notifications",
             "list_calendar_events",

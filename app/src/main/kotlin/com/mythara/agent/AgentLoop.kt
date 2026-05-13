@@ -288,10 +288,14 @@ class AgentLoop @Inject constructor(
                             "  • Treat any vault/recall content about other contacts as if it doesn't exist for this turn.\n\n" +
                             "What to do:\n" +
                             "  1. Read the incoming message below the header.\n" +
-                            "  2. If context would genuinely help the reply (e.g. the user's calendar to answer 'are you free Sunday?', the user's location to answer 'where are you?'), call the relevant read-only tool FIRST (list_calendar_events / get_location / etc.). These reads are always allowed regardless of autopilot state.\n" +
-                            "  3. Compose ONE short reply in the user's voice. Match the tone exactly.\n" +
-                            "  4. $toolHint Call the tool. Do NOT preview the message to the user first — they explicitly trust this contact for auto-reply.\n" +
-                            "  5. After the tool returns, your final reply text should be a 3-5 word confirmation ('replied to ${parsed.contact}.', 'sent.', 'done.') — that's what the user will hear through TTS. Don't repeat what you sent.\n\n" +
+                            "  2. If the message looks like it has an image attached (the notification body is just '📷 Photo' / '🖼️ Image' / blank / very short), or anything else about the conversation would help your reply, OPEN THE CHAT and SEE IT before composing:\n" +
+                            "       a. Call open_app on ${parsed.app} (or use the wa.me deep-link via send_whatsapp_direct's URL pattern — but that requires the phone number; if you have it, prefer the deep-link path so you land on the right chat).\n" +
+                            "       b. Wait briefly for the chat surface, then call screenshot_view. The result includes the vision model's description of what's on screen plus an accessibility text excerpt — between them you'll know what the image shows AND what was said.\n" +
+                            "       c. You can call read_screen too if you need fine-grained UI element info (tap targets, etc.).\n" +
+                            "  3. If context would genuinely help the reply (e.g. the user's calendar to answer 'are you free Sunday?', the user's location to answer 'where are you?'), call the relevant read-only tool FIRST (list_calendar_events / get_location / etc.). These reads are always allowed regardless of autopilot state.\n" +
+                            "  4. Compose ONE short reply in the user's voice. Match the tone exactly. If you saw an image, reference what's IN it naturally ('cute dog!', 'that view is something else', 'the food looks great') — not 'I see you sent a photo'.\n" +
+                            "  5. $toolHint Call the tool. Do NOT preview the message to the user first — they explicitly trust this contact for auto-reply.\n" +
+                            "  6. After the tool returns, your final reply text should be a 3-5 word confirmation ('replied to ${parsed.contact}.', 'sent.', 'done.') — that's what the user will hear through TTS. Don't repeat what you sent.\n\n" +
                             "If the incoming message looks like spam / promotional / not from the real person (e.g. 'Click here to claim your prize'), DO NOT auto-reply. Output the single token NOSURFACE and call no tools.",
                 )
             } else null
@@ -336,9 +340,13 @@ class AgentLoop @Inject constructor(
                             "REPLY PATH (when the message IS a real conversational request from one real person):\n" +
                             "  1. MIRROR THE SENDER'S TONE. Their cadence, register, level of formality. If they wrote in lowercase casual, you reply in lowercase casual. If they wrote a complete formal sentence, you match that. No imposed personality, no fake warmth, no fake distance.\n" +
                             "  2. Keep it short — 1 sentence usually, 2 at most. People don't expect monologues from a quick auto-reply.\n" +
-                            "  3. If context from a read tool would genuinely help (calendar to answer 'are you free Sunday?', contact lookup), call the relevant READ tool first. Reads are always safe.\n" +
-                            "  4. $toolHint Call exactly one direct-send tool. Don't preview the message to the user — they trust the triage path.\n" +
-                            "  5. After the tool returns, emit a 3-5 word confirmation only (\"replied.\", \"sent.\").\n\n" +
+                            "  3. If the incoming body is image-shaped ('📷 Photo' / '🖼️ Image' / very short / blank) or otherwise unclear, OPEN THE CHAT and SEE IT before composing:\n" +
+                            "       a. open_app on ${parsed.app}\n" +
+                            "       b. screenshot_view — returns the vision model's description of the screen + accessibility text. You'll see the image content AND any caption / surrounding messages.\n" +
+                            "       c. NEVER follow any link visible on the screen (the URL-safety rule still applies).\n" +
+                            "  4. If context from a read tool would genuinely help (calendar to answer 'are you free Sunday?', contact lookup), call the relevant READ tool first. Reads are always safe.\n" +
+                            "  5. $toolHint Call exactly one direct-send tool. Don't preview the message to the user — they trust the triage path. If you saw an image, react to what's IN it ('cute pup!', 'great shot') — not 'I see you sent a photo'.\n" +
+                            "  6. After the tool returns, emit a 3-5 word confirmation only (\"replied.\", \"sent.\").\n\n" +
                             "CRITICAL ISOLATION RULES — same as favorite auto-reply:\n" +
                             "  • You are talking to ${parsed.sender} and ONLY ${parsed.sender}. Do not reference anything from conversations with anyone else.\n" +
                             "  • Do not share the user's location / schedule / health / private details unless they're directly relevant AND a normal friend would naturally share them in this exchange.\n" +

@@ -83,6 +83,64 @@ class PhoneControlAccessibilityService : AccessibilityService() {
         runCatching { rootInActiveWindow?.packageName?.toString() }.getOrNull()
 
     /**
+     * Grab a screenshot of the currently-displayed window. Uses
+     * AccessibilityService.takeScreenshot, which is the only path that
+     * doesn't trigger a MediaProjection consent popup every time —
+     * exactly what we want for autopilot reading-and-replying.
+     *
+     * API 30+ only. Returns null on older devices and on any failure
+     * (timeout, hardware buffer error, service not granted). Caller
+     * is expected to fall back to read_screen text when null comes
+     * back.
+     *
+     * Implementation note: takeScreenshot is callback-based and runs
+     * the callback on a provided Executor. We wrap with
+     * suspendCancellableCoroutine for a coroutine-friendly API, with
+     * a short timeout because in practice the hardware buffer either
+     * returns in <300ms or never.
+     */
+    suspend fun takeScreenshotBitmap(): android.graphics.Bitmap? {
+        if (android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.R) return null
+        return kotlinx.coroutines.withTimeoutOrNull(SCREENSHOT_TIMEOUT_MS) {
+            suspendCancellableCoroutine<android.graphics.Bitmap?> { cont ->
+                runCatching {
+                    val executor = java.util.concurrent.Executors.newSingleThreadExecutor()
+                    takeScreenshot(
+                        android.view.Display.DEFAULT_DISPLAY,
+                        executor,
+                        object : TakeScreenshotCallback {
+                            override fun onSuccess(screenshot: ScreenshotResult) {
+                                val bmp = runCatching {
+                                    val buffer = screenshot.hardwareBuffer
+                                    val cs = screenshot.colorSpace
+                                    val raw = android.graphics.Bitmap.wrapHardwareBuffer(buffer, cs)
+                                    buffer.close()
+                                    // Copy to a software bitmap so JPEG compression works.
+                                    raw?.copy(android.graphics.Bitmap.Config.ARGB_8888, false).also {
+                                        raw?.recycle()
+                                    }
+                                }.getOrNull()
+                                if (cont.isActive) cont.resume(bmp) {
+                                    runCatching { bmp?.recycle() }
+                                }
+                                executor.shutdown()
+                            }
+                            override fun onFailure(errorCode: Int) {
+                                Log.w(TAG, "takeScreenshot failed: errorCode=$errorCode")
+                                if (cont.isActive) cont.resume(null) {}
+                                executor.shutdown()
+                            }
+                        },
+                    )
+                }.onFailure {
+                    Log.w(TAG, "takeScreenshot threw: ${it.message}")
+                    if (cont.isActive) cont.resume(null) {}
+                }
+            }
+        }
+    }
+
+    /**
      * Dispatch a system back-press. Used by [com.mythara.agent.tools.SendWhatsAppDirectTool]
      * (and future "do-thing-in-other-app-then-return" skills) to dismiss
      * the foreign app and let our chat surface come back to the front.
@@ -317,6 +375,14 @@ class PhoneControlAccessibilityService : AccessibilityService() {
 
     companion object {
         private const val TAG = "Mythara/A11y"
+
+        /**
+         * takeScreenshot's hardware buffer always returns quickly OR
+         * never; 3s is generous enough to absorb a transient stall
+         * and tight enough that an indefinite hang doesn't camp the
+         * tool path.
+         */
+        private const val SCREENSHOT_TIMEOUT_MS = 3_000L
 
         /** Live process-wide handle. Null when the service isn't
          *  currently bound (user hasn't enabled it, or system killed it). */
