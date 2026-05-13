@@ -72,6 +72,11 @@ class UserAliasesViewModel @Inject constructor(
     fun remove(name: String) {
         viewModelScope.launch { store.remove(name) }
     }
+
+    /** Removes a specific (name, phone) row — used by the list × button. */
+    fun removeOne(name: String, phone: String) {
+        viewModelScope.launch { store.removeOne(name, phone) }
+    }
 }
 
 /**
@@ -167,7 +172,7 @@ fun UserAliasesPanel(vm: UserAliasesViewModel = hiltViewModel()) {
                             )
                         }
                     }
-                    TextButton(onClick = { vm.remove(alias.name) }) {
+                    TextButton(onClick = { vm.removeOne(alias.name, alias.phone) }) {
                         Text("${Glyph.Cross}", color = MytharaColors.Sriracha)
                     }
                 }

@@ -97,8 +97,12 @@ class UserAliasesStore @Inject constructor(
 
     suspend fun upsert(alias: Alias) {
         val current = list().toMutableList()
-        val idx = current.indexOfFirst { it.name.equals(alias.name, ignoreCase = true) }
-        if (idx >= 0) current[idx] = alias else current.add(alias)
+        val incoming = alias.copy(name = alias.name.trim())
+        // Dedup by (name + digits) so the same contact's mobile +
+        // work numbers coexist. Pure name-keying collapsed them and
+        // silently dropped the second add.
+        val idx = current.indexOfFirst { sameKey(it, incoming) }
+        if (idx >= 0) current[idx] = incoming else current.add(incoming)
         save(current)
     }
 
@@ -116,15 +120,34 @@ class UserAliasesStore @Inject constructor(
         for (alias in aliases) {
             val n = alias.name.trim()
             if (n.isEmpty()) continue
-            val idx = current.indexOfFirst { it.name.equals(n, ignoreCase = true) }
             val normalized = alias.copy(name = n)
+            // Same dedup as upsert — same contact's two numbers stay
+            // as two separate entries.
+            val idx = current.indexOfFirst { sameKey(it, normalized) }
             if (idx >= 0) current[idx] = normalized else current.add(normalized)
         }
         save(current)
     }
 
+    /**
+     * Identity for dedup: same name (case-insensitive) AND same
+     * digits string. Either field differs → distinct alias.
+     */
+    private fun sameKey(a: Alias, b: Alias): Boolean =
+        a.name.equals(b.name, ignoreCase = true) && a.digits == b.digits
+
     suspend fun remove(name: String) {
         save(list().filterNot { it.name.equals(name, ignoreCase = true) })
+    }
+
+    /**
+     * Remove a specific alias by (name, digits) so the user can
+     * delete just one of a contact's multiple registered numbers
+     * without taking out the others.
+     */
+    suspend fun removeOne(name: String, phone: String) {
+        val digits = phone.filter { it.isDigit() }
+        save(list().filterNot { it.name.equals(name, ignoreCase = true) && it.digits == digits })
     }
 
     suspend fun clear() {
