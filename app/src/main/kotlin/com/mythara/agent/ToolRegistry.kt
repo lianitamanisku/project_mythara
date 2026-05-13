@@ -19,6 +19,7 @@ import com.mythara.agent.tools.WebFetchTool
 import com.mythara.minimax.MiniMaxClient
 import com.mythara.minimax.models.Tool as ApiTool
 import com.mythara.minimax.models.ToolFunction
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
@@ -70,6 +71,7 @@ class ToolRegistry @Inject constructor(
     private val confirmationSettings: ConfirmationSettings,
     private val audit: com.mythara.audit.AuditLogger,
     private val criticalGuard: CriticalActionGuard,
+    private val autoReplyPrefix: com.mythara.data.AutoReplyPrefixStore,
 ) {
     private val tools: List<Tool> = listOf(
         timeTool, batteryTool, webFetchTool,
@@ -228,18 +230,52 @@ class ToolRegistry @Inject constructor(
             }
         }
 
+        // Auto-reply prefix injection — only when:
+        //   (a) the current turn is an auto-reply (the AgentLoop set
+        //       AutoReplyMarker in the coroutine context), AND
+        //   (b) the tool is a phone-send tool with a body field, AND
+        //   (c) the user has configured a non-blank prefix.
+        // Done mechanically here rather than via the LLM prompt because
+        // LLMs frequently strip or reflow leading parentheticals — the
+        // only guarantee that "LUMI (autopilot):" actually reaches the
+        // wire is to splice it in deterministically.
+        val effectiveArgs: JsonObject = run {
+            val isAutoReplyTurn = currentCoroutineContext()[AutoReplyMarker.Key] != null
+            if (!isAutoReplyTurn || tool.name !in PHONE_SEND_TOOLS) return@run args
+            val rawPrefix = runCatching { autoReplyPrefix.prefix() }.getOrDefault("")
+            val prefix = rawPrefix.takeIf { it.isNotBlank() } ?: return@run args
+            val body = (args["body"] as? JsonPrimitive)?.content.orEmpty()
+            if (body.isBlank()) return@run args
+            // Idempotent: if the model already echoed the prefix at
+            // the start of body (shouldn't, but defensive), don't
+            // double it up.
+            val newBody = if (body.startsWith(prefix)) body else "$prefix$body"
+            JsonObject(args.toMutableMap().apply { put("body", JsonPrimitive(newBody)) })
+        }
+
         val t0 = System.nanoTime()
-        val result = runCatching { tool.execute(args) }
+        val result = runCatching { tool.execute(effectiveArgs) }
             .getOrElse { ToolResult.fail(it.message ?: "tool threw ${it.javaClass.simpleName}") }
         val latencyMs = (System.nanoTime() - t0) / 1_000_000
+        // Audit log records the FINAL args (with prefix applied) so the
+        // user sees exactly what landed on the wire, not the LLM's
+        // pre-prefix body.
         audit.logToolCall(
             toolName = tool.name,
-            argsJson = argsJson,
+            argsJson = if (effectiveArgs === args) argsJson else effectiveArgs.toString(),
             ok = result.ok,
             output = result.output,
             latencyMs = latencyMs,
         )
         return result
+    }
+
+    companion object {
+        /** Tools that carry a user-visible `body` field worth prefixing. */
+        private val PHONE_SEND_TOOLS: Set<String> = setOf(
+            "send_sms_direct",
+            "send_whatsapp_direct",
+        )
     }
 
     /** True if the model returned a name we don't have a binding for. */

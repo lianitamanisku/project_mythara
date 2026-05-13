@@ -437,10 +437,17 @@ class AgentLoop @Inject constructor(
             // any tool that wants the user's verbatim words (e.g.
             // take_photo's vision pass) can read it from the coroutine
             // context without the agent loop knowing tool-specific details.
+            val isAutoReplyTurn = userText.startsWith(AutoReplyDispatcher.AUTO_REPLY_PREFIX)
             for (call in toolCalls) {
                 emit(Turn.ToolStart(call.id, call.function.name, call.function.arguments))
                 val t0 = System.nanoTime()
-                val result = kotlinx.coroutines.withContext(UserMessageContext(userText)) {
+                // Compose the coroutine context: always carry the user
+                // message; additionally mark auto-reply turns so the
+                // registry knows whether to apply the configured prefix.
+                val toolContext: kotlin.coroutines.CoroutineContext =
+                    if (isAutoReplyTurn) UserMessageContext(userText) + AutoReplyMarker()
+                    else UserMessageContext(userText)
+                val result = kotlinx.coroutines.withContext(toolContext) {
                     registry.execute(call.function.name, call.function.arguments)
                 }
                 val dt = (System.nanoTime() - t0) / 1_000_000
@@ -874,4 +881,17 @@ class AgentDepth(val depth: Int) :
 class UserMessageContext(val text: String) :
     AbstractCoroutineContextElement(Key) {
     companion object Key : CoroutineContext.Key<UserMessageContext>
+}
+
+/**
+ * Marker element set by [AgentLoop.submit] whenever the current turn
+ * is an auto-reply (user text starts with
+ * [AutoReplyDispatcher.AUTO_REPLY_PREFIX]). Read by
+ * [com.mythara.agent.ToolRegistry] at execute time to decide whether
+ * the configured auto-reply prefix should be prepended to outgoing
+ * messages — only auto-reply turns mark messages as agent-originated;
+ * explicit user-driven sends go through verbatim.
+ */
+class AutoReplyMarker : AbstractCoroutineContextElement(Key) {
+    companion object Key : CoroutineContext.Key<AutoReplyMarker>
 }
