@@ -80,7 +80,7 @@ class AgentLoop @Inject constructor(
         data object MissingApiKey : Turn
     }
 
-    fun submit(userText: String): Flow<Turn> = flow {
+    fun submit(userText: String, fromVoice: Boolean = false): Flow<Turn> = flow {
         val snap = settings.snapshot()
         val apiKey = snap.apiKey
         if (apiKey.isNullOrBlank()) {
@@ -111,6 +111,30 @@ class AgentLoop @Inject constructor(
         val moodSystem: ChatMessage? = recall.renderMoodSystemMessage(moodTrend)?.let { rendered ->
             android.util.Log.d(TAG, "injecting mood context: $moodTrend")
             ChatMessage(role = "system", content = rendered)
+        }
+
+        // Voice-input system prompt. When the user spoke (Pixel Buds
+        // tap, mic button, continuous voice chat), force a much shorter
+        // and more conversational response. Long paragraphs and
+        // markdown lists are unbearable to listen to — the TTS layer
+        // also caps length on the spoken-text side, but pushing the
+        // brevity all the way up to the model is what produces a
+        // genuinely natural answer rather than a clipped one.
+        val voiceSystem: ChatMessage? = if (fromVoice) {
+            ChatMessage(
+                role = "system",
+                content =
+                    "The user is speaking to you, not typing. Your reply will be read aloud. " +
+                        "Constraints for this turn: " +
+                        "(1) Reply in 1–2 short sentences, max 40 words. " +
+                        "(2) Conversational tone, like a friend texting back — no formal greetings, no preamble. " +
+                        "(3) NEVER use markdown, lists, code blocks, headers, URLs, or bullets. " +
+                        "(4) Skip filler ('Sure!', 'I'd be happy to', 'Let me know if you need anything else'). " +
+                        "(5) If the full answer would be longer, give the headline now and offer to elaborate ('want more detail?'). " +
+                        "(6) Spell out numbers and symbols as they'd be spoken ('5%' → 'five percent', 'http://x' → drop URLs entirely).",
+            )
+        } else {
+            null
         }
 
         // Auto-process notifications mode. When ChatViewModel forwards a
@@ -166,10 +190,14 @@ class AgentLoop @Inject constructor(
             // turn 400s — bricks chat until the user clears history.
             // Sanitise on every send so we self-heal.
             val historyMessages: List<ChatMessage> = sanitizeHistory(rawHistory)
-            // Prepend system messages (notif triage hint first if any,
-            // then mood context, then recalled facts) so MiniMax sees
-            // every framing layer before persisted chat history.
+            // Prepend system messages. Order matters: most-specific
+            // constraints first (voice / notif framing), then richer
+            // context (mood, recall), then persisted history. MiniMax
+            // weights earlier system messages more strongly in our
+            // experience, so the "be brief" voice constraint should
+            // win when present.
             val prior: List<ChatMessage> = buildList {
+                if (voiceSystem != null) add(voiceSystem)
                 if (notifSystem != null) add(notifSystem)
                 if (moodSystem != null) add(moodSystem)
                 if (recallSystem != null) add(recallSystem)

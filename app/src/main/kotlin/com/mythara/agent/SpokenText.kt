@@ -94,6 +94,46 @@ object SpokenText {
     }
 
     /**
+     * Bound the text read aloud to roughly [maxChars] worth of speech,
+     * cutting at the last sentence boundary within that window so the
+     * speech doesn't end mid-thought. Used by [com.mythara.mic.Tts]
+     * when the agent loop's voice-mode system prompt failed to keep
+     * the model brief — a long markdown-stripped paragraph would still
+     * take 90+ seconds to read aloud, which is unusable.
+     *
+     * The chat UI shows the full text; only the TTS path is truncated.
+     * Returns the input unchanged when it's already short enough.
+     */
+    fun truncateForSpeech(text: String, maxChars: Int = DEFAULT_SPEAK_MAX): String {
+        if (text.length <= maxChars) return text
+        val window = text.take(maxChars)
+        // Find the last sentence terminator within the window. If we
+        // find one in the back half, cut there for a clean trailing
+        // sentence. Otherwise fall back to the last whitespace so we
+        // don't break a word in half.
+        val terminators = listOf('.', '!', '?')
+        val lastTerm = terminators
+            .map { ch -> window.lastIndexOf(ch) }
+            .maxOrNull() ?: -1
+        return if (lastTerm > maxChars / 2) {
+            window.substring(0, lastTerm + 1).trimEnd()
+        } else {
+            val lastSpace = window.lastIndexOf(' ')
+            if (lastSpace > maxChars / 2) window.substring(0, lastSpace).trimEnd() + "…"
+            else window.trimEnd() + "…"
+        }
+    }
+
+    /**
+     * Default character budget for spoken output. Tuned so a typical
+     * Android TTS pace (~150 wpm, ~5 chars/word) renders in under
+     * 30 seconds — long enough for any reasonable conversational
+     * reply, short enough that a runaway model can't lock the user
+     * into a minute-long monologue.
+     */
+    const val DEFAULT_SPEAK_MAX = 700
+
+    /**
      * Removes emoji + emoji-modifier codepoints. Iterates by Unicode
      * codepoint (not Java `char`) because most emoji live above U+FFFF
      * and would otherwise be processed as surrogate-pair halves.

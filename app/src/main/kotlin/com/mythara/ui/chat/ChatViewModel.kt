@@ -52,11 +52,11 @@ class ChatViewModel @Inject constructor(
 
     init {
         tts.init()
-        // "Hey Lumi <query>" → submit the query just like a typed message.
-        // The listener service has already transcribed it via Vosk;
-        // we don't need a second STT pass.
+        // "Hey Lumi <query>" → submit the query just like a typed
+        // message, but flag it as voice-originated so the agent loop
+        // injects the "be brief, no markdown" system prompt.
         viewModelScope.launch {
-            lumiListenerStore.wakeQueries.collect { wq -> submit(wq.query) }
+            lumiListenerStore.wakeQueries.collect { wq -> submit(wq.query, fromVoice = true) }
         }
         // Plumb TTS "is speaking right now" up to the UI so the
         // continuous-voice loop can pause while Lumi is replying out
@@ -256,11 +256,22 @@ class ChatViewModel @Inject constructor(
         }
     }
 
-    fun submit(text: String) {
+    /**
+     * Public entry. The `fromVoice` flag tells [AgentLoop] this turn
+     * originated from speech (Pixel Buds tap, mic button, continuous
+     * mode, wake-word). The agent loop injects a system message that
+     * pushes the model toward a short, conversational, no-markdown
+     * answer — long paragraphs are unlistenable. Typed messages keep
+     * the default behaviour where the model can produce as much
+     * structured text as it wants.
+     */
+    fun submit(text: String) = submit(text, fromVoice = false)
+
+    fun submit(text: String, fromVoice: Boolean) {
         if (text.isBlank()) return
         _ui.update { it.copy(thinking = true, streaming = "", needsApiKey = false, errorBanner = null) }
         viewModelScope.launch {
-            agent.submit(text).collect { turn ->
+            agent.submit(text, fromVoice = fromVoice).collect { turn ->
                 when (turn) {
                     is AgentLoop.Turn.Delta -> _ui.update {
                         it.copy(streaming = (it.streaming ?: "") + turn.text)
@@ -305,6 +316,15 @@ class ChatViewModel @Inject constructor(
                         val cleaned = Thinks.strip(turn.finalText)
                             .removeSuffix(" [hit max iterations]")
                         val spoken = SpokenText.forSpeech(cleaned)
+                        // Safety net for voice mode. The agent-loop
+                        // system prompt asks the model to be brief on
+                        // voice turns, but if it slips and produces a
+                        // paragraph, the spoken path truncates at the
+                        // last sentence boundary inside DEFAULT_SPEAK_MAX
+                        // so the user isn't stuck listening to a
+                        // 90-second monologue. Chat UI still shows
+                        // the full text unchanged.
+                        val toSpeak = SpokenText.truncateForSpeech(spoken)
                         // Suppress TTS when the model emitted only the
                         // NOSURFACE sentinel — this turn was an
                         // auto-processed notification the model decided
@@ -314,10 +334,10 @@ class ChatViewModel @Inject constructor(
                             com.mythara.agent.AgentLoop.NOSURFACE_TOKEN,
                             ignoreCase = true,
                         )
-                        if (spoken.isNotBlank() && !nosurface) {
+                        if (toSpeak.isNotBlank() && !nosurface) {
                             launch {
-                                val locale = languageDetector.identifyLocale(spoken)
-                                tts.speak(spoken, locale, turn.userMoodTrend)
+                                val locale = languageDetector.identifyLocale(toSpeak)
+                                tts.speak(toSpeak, locale, turn.userMoodTrend)
                             }
                         }
                     }

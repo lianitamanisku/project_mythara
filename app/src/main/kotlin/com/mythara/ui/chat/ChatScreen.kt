@@ -134,7 +134,9 @@ fun ChatScreen(
                 if (text.isNotEmpty()) {
                     pending.clear()
                     if (!ui.thinking && !ui.speaking) {
-                        vm.submit(text)
+                        // Continuous-mode utterances are voice input —
+                        // flag for short conversational reply.
+                        vm.submit(text, fromVoice = true)
                     }
                 }
             }
@@ -220,7 +222,7 @@ fun ChatScreen(
                 when (terminal) {
                     is SpeechRecognition.Event.Final -> {
                         val text = terminal.text.trim()
-                        if (text.isNotEmpty()) vm.submit(text)
+                        if (text.isNotEmpty()) vm.submit(text, fromVoice = true)
                     }
                     is SpeechRecognition.Event.Error ->
                         android.util.Log.w("Mythara/Chat", "voice trigger SR error: ${terminal.message}")
@@ -265,7 +267,14 @@ fun ChatScreen(
             }
         }
 
-        Composer(onSubmit = vm::submit, enabled = !ui.thinking)
+        Composer(
+            // The Composer distinguishes mic-driven vs typed input
+            // — both call this callback but with different
+            // `fromVoice` flags so the agent loop can produce a
+            // voice-friendly short reply when the user spoke.
+            onSubmit = { text, fromVoice -> vm.submit(text, fromVoice) },
+            enabled = !ui.thinking,
+        )
     }
 }
 
@@ -407,7 +416,7 @@ private fun TextBubble(role: String, text: String, isUser: Boolean) {
 }
 
 @Composable
-private fun Composer(onSubmit: (String) -> Unit, enabled: Boolean) {
+private fun Composer(onSubmit: (String, Boolean) -> Unit, enabled: Boolean) {
     var draft by remember { mutableStateOf("") }
     Row(
         modifier = Modifier
@@ -417,14 +426,14 @@ private fun Composer(onSubmit: (String) -> Unit, enabled: Boolean) {
         horizontalArrangement = Arrangement.spacedBy(10.dp),
     ) {
         // Mic button — push-to-talk via SpeechRecognizer. Partials stream into
-        // the draft field; final fires submit() so the voice path lands the same
-        // turn as text without a separate "send" tap.
+        // the draft field; final fires submit() with fromVoice=true so the
+        // agent loop produces a voice-friendly short reply.
         MicButton(
             onPartial = { draft = it },
             onFinal = {
                 draft = it
                 if (enabled && draft.isNotBlank()) {
-                    onSubmit(draft); draft = ""
+                    onSubmit(draft, /* fromVoice = */ true); draft = ""
                 }
             },
             onError = { /* surface later via VM event channel */ },
@@ -471,7 +480,10 @@ private fun Composer(onSubmit: (String) -> Unit, enabled: Boolean) {
                 .background(if (enabled && draft.isNotBlank()) MytharaColors.Charple else MytharaColors.Surface)
                 .border(1.dp, if (enabled && draft.isNotBlank()) MytharaColors.Charple else MytharaColors.SurfaceHigh, CircleShape)
                 .clickable(enabled = enabled && draft.isNotBlank()) {
-                    onSubmit(draft)
+                    // Typed input — fromVoice=false. Long answers with
+                    // markdown are fine on the chat surface, so we
+                    // skip the brevity system prompt.
+                    onSubmit(draft, /* fromVoice = */ false)
                     draft = ""
                 },
             contentAlignment = Alignment.Center,
