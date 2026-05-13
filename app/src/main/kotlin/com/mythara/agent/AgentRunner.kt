@@ -58,6 +58,7 @@ class AgentRunner @Inject constructor(
     private val agent: AgentLoop,
     private val tts: Tts,
     private val languageDetector: LanguageDetector,
+    private val moodTracker: com.mythara.agent.mood.ChatMoodTracker,
 ) {
     /**
      * Process-wide scope. SupervisorJob so one failing turn doesn't
@@ -108,6 +109,21 @@ class AgentRunner @Inject constructor(
         scope.launch {
             beginTurn()
             try {
+                // Run the lexical mood scorer BEFORE the agent loop
+                // starts so the just-detected mood is in the vault
+                // when AgentLoop.submit calls recall.recentMoodTrend
+                // at the top of its iteration. This is what feeds
+                // back into both:
+                //   - the agent's "be warmer / softer" system message
+                //   - the userMoodTrend on Turn.Finished, which drives
+                //     TTS pitch/rate (Android) and stability/style
+                //     (ElevenLabs)
+                // The whole pass is microseconds + one vault row write
+                // (~10ms), so we don't perceptibly delay the user's
+                // reply.
+                runCatching { moodTracker.track(text, fromVoice) }
+                    .onFailure { Log.w(TAG, "mood track failed: ${it.message}") }
+
                 agent.submit(text, fromVoice = fromVoice).collect { turn ->
                     _turnEvents.tryEmit(turn)
                     if (turn is AgentLoop.Turn.Finished) {
