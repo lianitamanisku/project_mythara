@@ -35,6 +35,7 @@ class ChatViewModel @Inject constructor(
     lumiListenerStore: com.mythara.wake.LumiListenerStore,
     val micBroker: com.mythara.mic.MicBroker,
     notifAutoProcessStore: com.mythara.services.NotificationAutoProcessStore,
+    private val autopilotStore: com.mythara.data.AutopilotStore,
     private val notifDecisionEngine: com.mythara.services.NotificationDecisionEngine,
     private val vault: com.mythara.secret.observe.vault.LearningVault,
     private val embedder: com.mythara.secret.observe.embed.LocalEmbedder,
@@ -59,7 +60,14 @@ class ChatViewModel @Inject constructor(
         // message, but flag it as voice-originated so the agent loop
         // injects the "be brief, no markdown" system prompt.
         viewModelScope.launch {
-            lumiListenerStore.wakeQueries.collect { wq -> submit(wq.query, fromVoice = true) }
+            lumiListenerStore.wakeQueries.collect { wq ->
+                // Autopilot gate — wake-word triggers are an "auto"
+                // path; if the user has flipped autopilot off, drop
+                // the query silently. Their next tap on the mic
+                // button still works (explicit action, not auto).
+                if (!autopilotStore.isEnabled()) return@collect
+                submit(wq.query, fromVoice = true)
+            }
         }
         // Plumb TTS "is speaking right now" up to the UI so the
         // continuous-voice loop can pause while Lumi is replying out
@@ -114,6 +122,11 @@ class ChatViewModel @Inject constructor(
                             runCatching { memorySyncScheduler.fireNowIfStale() }
                             val u = _ui.value
                             if (u.thinking || u.speaking) return@collect
+                            // Autopilot gate — even when notification
+                            // auto-process is on, master autopilot can
+                            // pause the loop without forcing the user
+                            // to flip multiple toggles.
+                            if (!autopilotStore.isEnabled()) return@collect
                             val formatted = formatNotificationForAgent(r) ?: return@collect
                             submit(formatted)
                         }

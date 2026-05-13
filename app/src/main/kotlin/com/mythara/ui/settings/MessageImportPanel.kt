@@ -31,6 +31,8 @@ import androidx.core.content.ContextCompat
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.mythara.imports.ImageIngestProgress
+import com.mythara.imports.ImageIngestScheduler
 import com.mythara.imports.MessagePersonaExtractor
 import com.mythara.imports.SmsImporter
 import com.mythara.imports.WhatsAppExportImporter
@@ -48,6 +50,8 @@ class MessageImportPanelViewModel @Inject constructor(
     private val smsImporter: SmsImporter,
     private val waImporter: WhatsAppExportImporter,
     private val extractor: MessagePersonaExtractor,
+    private val imageIngestScheduler: ImageIngestScheduler,
+    val imageIngestProgress: ImageIngestProgress,
 ) : ViewModel() {
 
     private val _status = MutableStateFlow<String?>(null)
@@ -103,23 +107,43 @@ class MessageImportPanelViewModel @Inject constructor(
                     _busy.value = false
                     return@launch
                 }
-            _status.value = "${Glyph.Check} learned ${report.recordsWritten} traits from ${report.messagesAnalyzed} WhatsApp messages"
+            // If the zip carried images, kick off the throttled vision
+            // ingest as a one-time WorkManager job. Runs in background,
+            // survives lock-screen, paces the vision API at 60s/image.
+            val imageCount = out.imagePaths.size
+            if (imageCount > 0) {
+                imageIngestScheduler.startIngest()
+                _status.value = "${Glyph.Check} learned ${report.recordsWritten} traits from ${report.messagesAnalyzed} messages — now slowly processing $imageCount photos in the background (~${imageCount} min)"
+            } else {
+                _status.value = "${Glyph.Check} learned ${report.recordsWritten} traits from ${report.messagesAnalyzed} WhatsApp messages"
+            }
             _busy.value = false
         }
+    }
+
+    fun cancelImageIngest() {
+        imageIngestScheduler.cancel()
+        imageIngestProgress.reset()
     }
 }
 
 /**
- * One-time import of message history (SMS via ContentProvider,
- * WhatsApp via the user-exported `.txt` chat dump). Each import
- * produces a handful of persona-trait vault records — top
- * contacts, peak hour, communication style — and stops there.
- * Raw messages are never persisted.
+ * One-time import of message history. SMS via ContentProvider, WhatsApp
+ * via the user-exported `.txt` (chat-only) or `.zip` (chat + media)
+ * dump.
+ *
+ * Each import produces persona-trait vault records — top contacts, peak
+ * hour, communication style, Gemma-extracted traits over outgoing
+ * messages. Zip imports additionally kick off a throttled background
+ * vision pass over the included images (one call every 60s by default)
+ * which extracts durable traits like "the user spends time outdoors"
+ * or "owns a cat". Raw messages and images are never persisted.
  */
 @Composable
 fun MessageImportPanel(vm: MessageImportPanelViewModel = hiltViewModel()) {
     val status by vm.status.collectAsState()
     val busy by vm.busy.collectAsState()
+    val ingestState by vm.imageIngestProgress.state.collectAsState()
     val ctx = LocalContext.current
 
     val smsPermLauncher = rememberLauncherForActivityResult(
@@ -171,9 +195,13 @@ fun MessageImportPanel(vm: MessageImportPanelViewModel = hiltViewModel()) {
             Button(
                 enabled = !busy,
                 onClick = {
-                    // ACTION_OPEN_DOCUMENT with text/plain — WhatsApp's
-                    // "Export chat" output. Other text dumps work too
-                    // if the user wants to retry an import.
+                    // ACTION_OPEN_DOCUMENT with both text/plain AND
+                    // application/zip — covers both the "Without media"
+                    // (.txt) and "With media" (.zip) exports WhatsApp
+                    // produces. The picker UI shows both file types as
+                    // acceptable; on the importer side we sniff actual
+                    // content (magic bytes + filename) rather than
+                    // trusting the picker's mime.
                     waFilePicker.launch(arrayOf("text/plain", "application/zip", "*/*"))
                 },
                 colors = ButtonDefaults.buttonColors(
@@ -181,7 +209,7 @@ fun MessageImportPanel(vm: MessageImportPanelViewModel = hiltViewModel()) {
                     contentColor = MytharaColors.Fg,
                 ),
             ) {
-                Text("${Glyph.Arrow} import WhatsApp .txt")
+                Text("${Glyph.Arrow} import WhatsApp")
             }
         }
 
@@ -196,9 +224,49 @@ fun MessageImportPanel(vm: MessageImportPanelViewModel = hiltViewModel()) {
             )
         }
 
+        // Live image-ingest progress, rendered when an ingest job is
+        // running or just finished. Lets the user see how the slow
+        // background pass is progressing without burying it in logs.
+        when (val s = ingestState) {
+            is ImageIngestProgress.State.Idle -> {}
+            is ImageIngestProgress.State.Running -> {
+                Spacer(Modifier.height(8.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        text = "${Glyph.Ellipsis} ingesting photos: ${s.processed}/${s.total}" +
+                            if (s.errors > 0) " · ${s.errors} skipped" else "",
+                        color = MytharaColors.FgDim,
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                    Button(
+                        onClick = { vm.cancelImageIngest() },
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = MytharaColors.Surface,
+                            contentColor = MytharaColors.FgMute,
+                        ),
+                    ) {
+                        Text("${Glyph.Cross} stop")
+                    }
+                }
+            }
+            is ImageIngestProgress.State.Done -> {
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    text = "${Glyph.Check} photo ingest complete: ${s.processed}/${s.total}" +
+                        if (s.errors > 0) " · ${s.errors} skipped" else "",
+                    color = MytharaColors.Julep,
+                    style = MaterialTheme.typography.bodySmall,
+                )
+            }
+        }
+
         Spacer(Modifier.height(8.dp))
         Text(
-            text = "${Glyph.AccentBar} Mythara reads your messaging history ONE TIME to learn patterns about you (top contacts, when you message most, your communication style, and — if Gemma is loaded — deeper traits like recurring topics and tone). RAW MESSAGES NEVER LEAVE THE PHONE: cheap heuristics run locally, and the deep pass uses the on-device Gemma LLM. Only the extracted traits land in Lumi's memory and sync to your GitHub backup like every other vault record. For WhatsApp: open the chat in WhatsApp → kebab menu → More → Export chat → 'Without media' → share/save to a place you can find here (Files app, Downloads).",
+            text = "${Glyph.AccentBar} Mythara reads your messaging history ONCE to learn patterns about you. Text goes through the on-device Gemma model — raw messages NEVER leave your phone. WhatsApp .zip exports also include photos, which Mythara ingests slowly in the background (one image every 60 seconds by default) through your configured vision model (Gemini if set, otherwise MiniMax-VL); only the extracted traits land in Lumi's memory — the raw images are deleted as they're processed. The slow cadence keeps your vision API quota safe. Export chat in WhatsApp: kebab → More → Export chat → 'Without media' for fastest, 'With media' to also learn from photos. The export can be a .txt or .zip.",
             color = MytharaColors.FgDim,
             style = MaterialTheme.typography.bodySmall,
         )

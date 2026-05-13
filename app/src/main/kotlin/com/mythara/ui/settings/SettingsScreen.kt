@@ -86,6 +86,9 @@ fun SettingsScreen(
         }
 
         Spacer(Modifier.height(20.dp))
+        AutopilotPanel()
+
+        Spacer(Modifier.height(16.dp))
         UserNamePanel()
 
         Spacer(Modifier.height(16.dp))
