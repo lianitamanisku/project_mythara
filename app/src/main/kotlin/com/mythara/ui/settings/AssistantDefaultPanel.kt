@@ -2,11 +2,11 @@ package com.mythara.ui.settings
 
 import android.content.Context
 import android.content.Intent
-import android.net.Uri
 import android.provider.Settings
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -17,12 +17,23 @@ import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import com.mythara.ui.theme.Glyph
 import com.mythara.ui.theme.MytharaColors
+import com.mythara.voice.MytharaVoiceInteractionService
 
 /**
  * Settings panel that explains the "Pixel Buds tap → Lumi" path and
@@ -44,6 +55,20 @@ import com.mythara.ui.theme.MytharaColors
 @Composable
 fun AssistantDefaultPanel() {
     val ctx = LocalContext.current
+    val lifecycleOwner = LocalLifecycleOwner.current
+    // Recompute on every resume so flipping the system setting (in
+    // Default apps → Digital assistant) immediately reflects when the
+    // user comes back into Mythara without us having to re-mount.
+    var isDefault by remember { mutableStateOf(MytharaVoiceInteractionService.isAssistantPackage(ctx)) }
+    LaunchedEffect(lifecycleOwner) {
+        val obs = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                isDefault = MytharaVoiceInteractionService.isAssistantPackage(ctx)
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(obs)
+    }
+
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -58,24 +83,33 @@ fun AssistantDefaultPanel() {
         )
         Spacer(Modifier.height(8.dp))
 
-        Text(
-            text = "tap-and-hold your Pixel Buds (or hit the system assist gesture) and Lumi listens immediately — but only if Mythara is set as your default Digital Assistant app.",
-            color = MytharaColors.Fg,
-            style = MaterialTheme.typography.bodyMedium,
-        )
+        val (glyph, color, label) = if (isDefault) {
+            Triple(Glyph.Dot, MytharaColors.Julep, "active — Mythara is your default assistant")
+        } else {
+            Triple(Glyph.Cross, MytharaColors.Sriracha, "not set — long-press / corner-swipe / Pixel Buds tap still goes to Google")
+        }
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(glyph, color = color, style = MaterialTheme.typography.bodyMedium)
+            Spacer(Modifier.padding(end = 6.dp))
+            Text(label, color = MytharaColors.Fg, style = MaterialTheme.typography.bodyMedium)
+        }
+
         Spacer(Modifier.height(10.dp))
         Button(
             onClick = { openDigitalAssistantSettings(ctx) },
             colors = ButtonDefaults.buttonColors(
-                containerColor = MytharaColors.Charple,
+                containerColor = if (isDefault) MytharaColors.Surface else MytharaColors.Charple,
                 contentColor = MytharaColors.Fg,
             ),
         ) {
-            Text("${Glyph.Arrow} open default-assistant settings")
+            Text(
+                text = if (isDefault) "${Glyph.Refresh} re-open assistant settings"
+                else "${Glyph.Arrow} open default-assistant settings",
+            )
         }
         Spacer(Modifier.height(6.dp))
         Text(
-            text = "${Glyph.AccentBar} the page that opens lets you pick which app handles 'open the digital assistant'. Tap Mythara, accept the consent, come back. Once set, every Pixel Buds long-press or corner-swipe will pop Mythara open with the mic already listening — speak, and Lumi answers via your earbuds.",
+            text = "${Glyph.AccentBar} on Android 12+, picking Mythara in 'Digital assistant app' is what routes the long-press home / corner-swipe / Pixel Buds touch-and-hold to Lumi. If the gesture still opens Google after picking Mythara, scroll for 'Use default assistant' inside Pixel Buds → Touch controls → Touch & hold → Assistant. As a fallback, the chat surface mic button always works.",
             color = MytharaColors.FgDim,
             style = MaterialTheme.typography.bodySmall,
         )
@@ -84,7 +118,9 @@ fun AssistantDefaultPanel() {
 
 private fun openDigitalAssistantSettings(ctx: Context) {
     // ACTION_VOICE_INPUT_SETTINGS lands on the "Choose assistant app"
-    // surface on most Android 11+ devices. On a few OEM skins it
+    // surface on most Android 11+ devices (this is where Pixel
+    // exposes the Digital assistant picker — Settings → Apps →
+    // Default apps → Digital assistant app). On a few OEM skins it
     // lands one level up at "Voice and input"; the user takes one
     // more tap from there. If even that fails (very old shells we
     // don't target) we fall back to the catch-all top-level Settings.

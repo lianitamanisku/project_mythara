@@ -120,6 +120,43 @@
                 android:resource="@xml/accessibility_service_config" />
         </service>
 
+        <!-- VoiceInteractionService — what makes Mythara a real
+             "Assistant app" on Android 12+. Required (in addition to
+             the ACTION_ASSIST activity intent filter on MainActivity)
+             for the home long-press, corner-swipe assist gesture, and
+             Pixel Buds touch-and-hold to actually route to us when
+             the user picks Mythara in Settings → Default apps →
+             Digital assistant app. Without this service the OS lists
+             us as a candidate but never delivers the gesture-fired
+             intents — only an explicit `am start -a ASSIST` from adb
+             would reach MainActivity.
+
+             BIND_VOICE_INTERACTION is the system-protected permission
+             that limits binding to the OS itself; the service must
+             require it to be accepted as a valid assistant. -->
+        <service
+            android:name=".voice.MytharaVoiceInteractionService"
+            android:exported="true"
+            android:label="@string/app_name"
+            android:permission="android.permission.BIND_VOICE_INTERACTION">
+            <meta-data
+                android:name="android.voice_interaction"
+                android:resource="@xml/voice_interaction_service" />
+            <intent-filter>
+                <action android:name="android.service.voice.VoiceInteractionService" />
+            </intent-filter>
+        </service>
+
+        <!-- VoiceInteractionSessionService companion. Required by
+             Android to pair with the VoiceInteractionService — our
+             stub immediately calls finish() on the session because
+             Mythara's UX is the full chat activity, not an overlay
+             sheet. -->
+        <service
+            android:name=".voice.MytharaVoiceInteractionSessionService"
+            android:exported="true"
+            android:permission="android.permission.BIND_VOICE_INTERACTION" />
+
         <!-- Lumi always-listen service (M8.3a v2). Foreground service
              of type `microphone` — Vosk runs continuously, each final
              transcript is regex-checked for "Hey Lumi <query>", and on
