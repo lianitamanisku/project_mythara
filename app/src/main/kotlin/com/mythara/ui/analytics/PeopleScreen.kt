@@ -89,6 +89,26 @@ class PeopleViewModel @Inject constructor(
         }
     }
 
+    private val _cleanupStatus = MutableStateFlow<String?>(null)
+    val cleanupStatus: StateFlow<String?> = _cleanupStatus.asStateFlow()
+
+    /**
+     * Standalone cleanup pass — for the "clean up phantom profiles"
+     * button. Useful when the user has just added new aliases and
+     * wants the old mis-attributed data gone immediately, without
+     * waiting for the next rebuild.
+     */
+    fun cleanupNow() {
+        if (_refreshing.value) return
+        viewModelScope.launch {
+            _refreshing.value = true
+            val report = runCatching { builder.cleanupAliasMisattributions() }.getOrNull()
+            _cleanupStatus.value = if (report == null) "${Glyph.Cross} cleanup failed"
+            else "${Glyph.Check} cleaned ${report.cleanedProfiles} phantom profile(s) + ${report.cleanedVaultRows} vault row(s)"
+            _refreshing.value = false
+        }
+    }
+
     /**
      * Save the user-authored notes for a contact. Uses the DAO's
      * partial-update path so we don't race the analytics builder
@@ -122,6 +142,7 @@ fun PeopleScreen(
     val profiles by vm.profiles.collectAsState()
     val refreshing by vm.refreshing.collectAsState()
     val report by vm.lastReport.collectAsState()
+    val cleanupStatus by vm.cleanupStatus.collectAsState()
     var selectedKey by remember { mutableStateOf<String?>(null) }
     val selected = profiles.firstOrNull { it.nameKey == selectedKey }
 
@@ -189,9 +210,40 @@ fun PeopleScreen(
             }
             report?.let { r ->
                 Spacer(Modifier.height(6.dp))
+                val cleanupTail = if (r.cleanedProfiles + r.cleanedVaultRows > 0)
+                    " · cleaned ${r.cleanedProfiles} phantom + ${r.cleanedVaultRows} rows"
+                else ""
                 Text(
-                    text = "${Glyph.Check} last refresh: ${r.rebuilt} profiles, ${r.durationMs}ms",
+                    text = "${Glyph.Check} last refresh: ${r.rebuilt} profiles, ${r.durationMs}ms$cleanupTail",
                     color = MytharaColors.FgDim,
+                    style = MaterialTheme.typography.bodySmall,
+                )
+            }
+            // Dedicated cleanup button — runs ONLY the alias-
+            // misattribution sweep, no rebuild. Useful after adding a
+            // new alias to quickly purge the phantom profile without
+            // a full Gemma pass.
+            Spacer(Modifier.height(10.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                TextButton(
+                    onClick = { vm.cleanupNow() },
+                    enabled = !refreshing,
+                ) {
+                    Text(
+                        text = "${Glyph.Cross} clean up phantom profiles (alias matches)",
+                        color = MytharaColors.Sriracha,
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                }
+            }
+            cleanupStatus?.let { msg ->
+                Text(
+                    text = msg,
+                    color = if (msg.startsWith(Glyph.Check)) MytharaColors.Julep else MytharaColors.Sriracha,
                     style = MaterialTheme.typography.bodySmall,
                 )
             }

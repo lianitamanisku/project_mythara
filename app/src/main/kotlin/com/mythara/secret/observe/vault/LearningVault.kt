@@ -108,6 +108,16 @@ class LearningVault @Inject constructor(
      */
     suspend fun listAll(): List<LearningEntity> = dao.listAll()
 
+    /**
+     * Delete every learning row whose facets contain the given exact
+     * facet string (no quoting needed by caller; matching is exact-
+     * substring within the JSON array). Used by the analytics
+     * cleanup pass to remove vault rows facetted with
+     * `contact:<userAlias>` — phantom-contact data from imports that
+     * predate the user-alias filter.
+     */
+    suspend fun deleteByFacet(facet: String): Int = dao.deleteByFacet(facet)
+
     suspend fun markSynced(id: String, now: Long = System.currentTimeMillis()) {
         dao.markSynced(id, now)
     }

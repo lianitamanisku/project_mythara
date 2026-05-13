@@ -58,6 +58,7 @@ class ContactAnalyticsBuilder @Inject constructor(
     private val repo: ContactProfileRepository,
     private val favorites: FavoritesStore,
     private val gemma: GemmaExtractor,
+    private val userAliases: com.mythara.data.UserAliasesStore,
 ) {
     private val json = Json { ignoreUnknownKeys = true; isLenient = true }
 
@@ -66,7 +67,53 @@ class ContactAnalyticsBuilder @Inject constructor(
         val rebuilt: Int,
         val skippedNoData: Int,
         val durationMs: Long,
+        val cleanedProfiles: Int = 0,
+        val cleanedVaultRows: Int = 0,
     )
+
+    data class CleanupReport(
+        val cleanedProfiles: Int,
+        val cleanedVaultRows: Int,
+    )
+
+    /**
+     * One-shot cleanup of phantom contacts whose name matches a user
+     * alias. Two destructive operations:
+     *   1. Delete vault rows facetted with `contact:<aliasName>` —
+     *      these were attributed to a phantom contact by an older
+     *      import that predates the user-alias filter.
+     *   2. Delete the ContactProfileRow for that name so it stops
+     *      appearing on the People screen.
+     *
+     * Idempotent — running it on an already-clean state does nothing.
+     * Called automatically at the start of [rebuildAll] (self-healing)
+     * AND exposed standalone so the People-screen "clean up" button
+     * can fire it without waiting for a full rebuild.
+     */
+    suspend fun cleanupAliasMisattributions(): CleanupReport = withContext(Dispatchers.IO) {
+        val aliases = runCatching { userAliases.list() }.getOrDefault(emptyList())
+        if (aliases.isEmpty()) return@withContext CleanupReport(0, 0)
+        var profiles = 0
+        var rows = 0
+        for (alias in aliases) {
+            val name = alias.name.trim()
+            if (name.isBlank()) continue
+            val key = name.lowercase()
+            // Vault rows facetted with `contact:<alias>`.
+            val deleted = runCatching { vault.deleteByFacet("contact:$name") }.getOrDefault(0)
+            rows += deleted
+            // Profile row for this name key (if any).
+            val existing = repo.dao.byKey(key)
+            if (existing != null) {
+                runCatching { repo.dao.deleteByKey(key) }
+                profiles++
+            }
+        }
+        if (profiles > 0 || rows > 0) {
+            Log.d(TAG, "alias misattribution cleanup: deleted $profiles profile(s) + $rows vault row(s)")
+        }
+        CleanupReport(cleanedProfiles = profiles, cleanedVaultRows = rows)
+    }
 
     /**
      * Walk the vault and rebuild every contact profile. Called from
@@ -77,6 +124,14 @@ class ContactAnalyticsBuilder @Inject constructor(
      */
     suspend fun rebuildAll(force: Boolean = false): BuildReport = withContext(Dispatchers.IO) {
         val t0 = System.currentTimeMillis()
+        // Self-heal step — purge any phantom-contact rows whose name
+        // matches a user alias before we group + rebuild. Older
+        // imports (pre alias-filter) attributed user-sent messages to
+        // the user's WhatsApp profile name as a "contact", which
+        // showed up on the People screen as a duplicate of the user.
+        // Running cleanup first means the rebuild doesn't re-create
+        // the phantom profile.
+        val cleanup = runCatching { cleanupAliasMisattributions() }.getOrDefault(CleanupReport(0, 0))
         // Pull every entry from the vault. Bounded — even a power
         // user's vault stays in the low thousands; tens of thousands
         // would still fit in memory comfortably.
@@ -170,7 +225,14 @@ class ContactAnalyticsBuilder @Inject constructor(
 
         val dt = System.currentTimeMillis() - t0
         Log.d(TAG, "rebuilt $rebuilt profiles (skipped $skipped, force=$force) in ${dt}ms")
-        BuildReport(totalContacts = byContact.size, rebuilt = rebuilt, skippedNoData = skipped, durationMs = dt)
+        BuildReport(
+            totalContacts = byContact.size,
+            rebuilt = rebuilt,
+            skippedNoData = skipped,
+            durationMs = dt,
+            cleanedProfiles = cleanup.cleanedProfiles,
+            cleanedVaultRows = cleanup.cleanedVaultRows,
+        )
     }
 
     private fun groupByContact(rows: List<LearningEntity>): Map<String, List<LearningEntity>> {

@@ -67,6 +67,17 @@ interface LearningDao {
     suspend fun deleteById(id: String)
 
     /**
+     * Delete every row whose `facets` JSON contains the given exact
+     * facet string. Facets are stored as a JSON array of strings,
+     * e.g. `["contact:Mom","kind:notification-image"]`, so the LIKE
+     * needle has to include the surrounding quotes to avoid matching
+     * substrings of other facets ("contact:Ma" doesn't match
+     * "contact:Maya"). Returns the number of rows deleted.
+     */
+    @Query("DELETE FROM learnings WHERE facets LIKE '%\"' || :facet || '\"%'")
+    suspend fun deleteByFacet(facet: String): Int
+
+    /**
      * Unbounded list-all. Only used by [com.mythara.agent.SelfOrganizerWorker]'s
      * nightly dedup pass — production code should always use [listRecent] or
      * [listByTier] which carry an explicit limit.
