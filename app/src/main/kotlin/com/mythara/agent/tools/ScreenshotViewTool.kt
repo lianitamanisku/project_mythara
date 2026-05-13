@@ -144,11 +144,26 @@ class ScreenshotViewTool @Inject constructor(
     }
 
     private fun buildPrompt(focusArg: String): String {
-        val base = "Describe what's on this Android screen. Identify the app if obvious from layout/branding. " +
-            "If there's a chat conversation, summarise the visible messages and call out any images shared inline " +
-            "(what's actually in the image, not just \"there is an image\"). " +
-            "If there are UI elements to interact with (buttons, fields), name them. " +
-            "Keep it under 4 sentences."
+        // Tuned for the dominant use case: reading a chat to compose a
+        // reply. Has to surface BOTH the textual conversation AND a
+        // detailed account of any inline image content — the agent
+        // can't reason about an image it can't see. Bias the model
+        // hard toward image specifics (subject, activity, scene)
+        // because that's exactly what most models default to skipping
+        // ("they sent a photo" instead of "they sent a photo of their
+        // dog at the beach"). For non-chat screens the generic "what's
+        // on this screen" framing still works fine.
+        val base = "Describe what's on this Android screen for an assistant that needs to reply to whatever's visible. " +
+            "Identify the app if obvious from layout / branding. " +
+            "If there's a chat conversation, do TWO things:\n" +
+            "  (1) Summarise the visible text messages, who said what, in order.\n" +
+            "  (2) For EVERY image / photo / sticker / GIF visible inline, describe what's actually IN it: " +
+            "      the subject, the activity, the setting, the feeling. Not 'there is a photo' — say what the photo shows. " +
+            "      e.g. 'a golden retriever puppy on a beach at sunset', 'a plate of pasta with red sauce', " +
+            "      'a screenshot of an Apple Maps direction'. If the image is text-heavy, transcribe the visible text. " +
+            "      If multiple images, describe each one. " +
+            "If there are UI elements to interact with (buttons, fields), name them after the content summary. " +
+            "Keep it dense but useful — 3 to 6 sentences is fine when there's a lot to describe; don't pad with hedging."
         return if (focusArg.isNotEmpty()) "$base\nSpecial focus: $focusArg" else base
     }
 
