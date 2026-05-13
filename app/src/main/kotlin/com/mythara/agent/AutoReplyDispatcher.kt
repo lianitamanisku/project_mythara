@@ -3,6 +3,7 @@ package com.mythara.agent
 import android.content.Context
 import android.util.Log
 import com.mythara.audit.AuditLogger
+import com.mythara.data.AutoTriageStore
 import com.mythara.data.AutopilotStore
 import com.mythara.data.EnterpriseAutopilotStore
 import com.mythara.data.FavoritesStore
@@ -16,41 +17,34 @@ import javax.inject.Inject
 import javax.inject.Singleton
 
 /**
- * Watches the global [NotificationListener.newNotifications] stream,
- * matches incoming messages against the user's [FavoritesStore], and
- * fires a contact-scoped agent turn that composes + sends a reply via
- * the appropriate direct-send tool.
+ * Watches the global [NotificationListener.newNotifications] stream
+ * and decides what to do with each incoming message:
+ *
+ *   • SENDER MATCHES A FAVORITE → fire a tone-conditioned auto-reply
+ *     turn ([AUTO_REPLY_PREFIX]). Uses the user-chosen tone.
+ *
+ *   • SENDER IS A STRANGER, [AutoTriageStore] is ON → fire a triage
+ *     turn ([AUTO_TRIAGE_PREFIX]). The agent decides whether the
+ *     message is worth a reply at all, drops marketing/OTP/info/
+ *     groups, mirrors the conversation tone if it does reply, and
+ *     NEVER opens any URLs from the message (security).
+ *
+ *   • Anything else → silently ignored here, falls through to the
+ *     normal surface-and-decide notification path elsewhere.
  *
  * Process-scoped — lives in [com.mythara.MytharaApp] and starts at
- * cold-boot. This is the key difference from the ChatViewModel-hosted
- * auto-process path: that one only runs while the chat surface is
- * subscribed (which doesn't happen on a locked phone with the UI
- * detached). The dispatcher uses [AgentRunner] directly so it works
- * regardless of UI state.
+ * cold-boot so it works on locked screens / UI-detached.
  *
- * Gating chain (any one of these returning false drops the auto-reply):
- *   1. Master AutopilotStore.isEnabled() must be true
- *   2. EnterpriseAutopilotStore.isEnabled() must be true for enterprise pkgs
- *   3. Notification must carry a sender (title) we can match to a Favorite
- *   4. The Favorite's per-contact enabled must be true
- *   5. The notification's pkg must be in the Favorite's apps allowlist
- *   6. The body must be non-empty (auto-reply to an emoji-only ping is noise)
+ * Group detection (cheap heuristic; the prompt also has a hard
+ * "drop if group" rule as a backstop):
+ *   - title contains a comma → multi-recipient SMS / MMS
+ *   - body starts with "<Name>:" where Name differs from the
+ *     notification title → looks like a reply in a group chat
+ *   - title contains "(N messages)" / "(N)" → group summary
  *
- * When all checks pass we hand a custom-shaped turn to the agent:
- *   [auto-reply to <NAME> on <APP>, tone=<TONE>] message: "<BODY>"
- *
- * The agent loop's system prompt recognises [AUTO_REPLY_PREFIX] and
- * injects:
- *   - the tone guidance
- *   - the "never mention other contacts" hard rule
- *   - the directive to call send_whatsapp_direct / send_sms_direct
- *     immediately with the composed reply
- *
- * Conversation isolation: the contact name is also passed as a
- * scope facet so [SemanticRecall] (when it eventually grows
- * contact-scoping) only surfaces vault entries tagged with that
- * contact. For now, the prompt-level guardrail is the primary
- * defense; vault-level filtering is a follow-up.
+ * Sender-class drops (also cheap, no LLM tokens spent on these):
+ *   - all-digit shortcode senders (5-6 digit codes) → automated
+ *   - empty body → useless ping
  */
 @Singleton
 class AutoReplyDispatcher @Inject constructor(
@@ -58,6 +52,7 @@ class AutoReplyDispatcher @Inject constructor(
     private val favorites: FavoritesStore,
     private val autopilot: AutopilotStore,
     private val entAutopilot: EnterpriseAutopilotStore,
+    private val triage: AutoTriageStore,
     private val runner: AgentRunner,
     private val audit: AuditLogger,
 ) {
@@ -77,66 +72,174 @@ class AutoReplyDispatcher @Inject constructor(
     }
 
     private suspend fun handle(r: NotificationListener.Recent) {
-        // Cheap drops first — bail fast on the common case (a normal
-        // notification that doesn't match any favorite).
+        // Universal cheap drops first — bail before any store lookup.
         if (r.ongoing) return
         if (r.packageName == ctx.packageName) return
         val title = r.title?.trim().orEmpty()
         val body = r.text?.trim().orEmpty()
         if (title.isEmpty() || body.isEmpty()) return
 
-        val fav = favorites.matchByName(title) ?: return
-        if (!fav.enabled) return
-        if (fav.apps.isNotEmpty() && r.packageName !in fav.apps) {
-            Log.d(TAG, "favorite ${fav.name} matched but pkg=${r.packageName} not in app allowlist")
-            return
-        }
-
-        // Master gates.
-        if (!autopilot.isEnabled()) {
-            Log.d(TAG, "autopilot off — skipping auto-reply to ${fav.name}")
-            return
-        }
+        // Master gate: autopilot off → no auto-paths fire at all.
+        if (!autopilot.isEnabled()) return
+        // Enterprise gate: enterprise app + enterprise autopilot off → skip.
         if (EnterpriseAutopilotStore.isEnterprise(r.packageName) && !entAutopilot.isEnabled()) {
-            Log.d(TAG, "enterprise autopilot off — skipping ${r.packageName} reply to ${fav.name}")
+            Log.d(TAG, "enterprise autopilot off — skipping ${r.packageName}")
             return
         }
-
-        // Don't pile auto-replies on top of an in-progress agent turn —
-        // we'd thrash the streaming buffer and the user would hear
-        // overlapping TTS.
+        // Don't pile turns on a busy agent — overlapping streaming +
+        // TTS reads back garbled audio.
         if (runner.busy.value) {
-            Log.d(TAG, "agent busy — deferring auto-reply to ${fav.name}")
+            Log.d(TAG, "agent busy — deferring incoming on ${r.packageName}")
             return
         }
 
-        Log.d(TAG, "auto-reply firing: ${fav.name} via ${r.packageName} (tone=${fav.tone.label})")
-        audit.logSystem("auto-reply trigger: ${fav.name} on ${r.packageName} tone=${fav.tone.label}")
+        // Route 1: favorite match — explicit per-contact tone.
+        val fav = favorites.matchByName(title)
+        if (fav != null) {
+            if (!fav.enabled) return
+            if (fav.apps.isNotEmpty() && r.packageName !in fav.apps) {
+                Log.d(TAG, "favorite ${fav.name} matched but pkg=${r.packageName} not in app allowlist")
+                return
+            }
+            fireFavoriteReply(fav, body, r.packageName)
+            return
+        }
 
-        // Format. The prefix flips the agent into auto-reply mode; the
-        // structured trailing payload is parsed by AgentLoop into the
-        // tone-conditioned system message.
+        // Route 2: non-favorite triage. Only when the user has opted
+        // in. The triage prompt does the heavy lifting (decides yes/
+        // no, mirrors tone, refuses URLs, drops groups) but we still
+        // pre-filter obvious cases here to save tokens.
+        if (!triage.isEnabled()) return
+
+        if (looksLikeGroup(title, body)) {
+            Log.d(TAG, "triage skip (group): title=$title body0='${body.take(40)}'")
+            return
+        }
+        if (looksLikeAutomatedSender(title)) {
+            Log.d(TAG, "triage skip (automated sender): title=$title")
+            return
+        }
+        if (!isMessagingApp(r.packageName)) {
+            // Only triage actual messaging-app notifications. App
+            // notifications from random apps (Tinder match, news
+            // alert, etc.) get the normal surface path.
+            return
+        }
+
+        fireTriage(title, body, r.packageName)
+    }
+
+    private suspend fun fireFavoriteReply(fav: FavoritesStore.Favorite, body: String, pkg: String) {
+        Log.d(TAG, "auto-reply firing: ${fav.name} via $pkg (tone=${fav.tone.label})")
+        audit.logSystem("auto-reply trigger: ${fav.name} on $pkg tone=${fav.tone.label}")
         val turnText = buildString {
             append(AUTO_REPLY_PREFIX).append(' ')
             append("contact=").append(escape(fav.name)).append(' ')
             append("phone=").append(escape(fav.digits)).append(' ')
-            append("app=").append(escape(r.packageName)).append(' ')
+            append("app=").append(escape(pkg)).append(' ')
             append("tone=").append(fav.tone.label).append('\n')
             append("incoming: ").append(body)
         }
         runner.submit(text = turnText, fromVoice = false)
     }
 
+    private suspend fun fireTriage(senderTitle: String, body: String, pkg: String) {
+        Log.d(TAG, "triage firing: sender=$senderTitle via $pkg")
+        audit.logSystem("auto-triage trigger: $senderTitle on $pkg")
+        // No phone in the header — for non-favorites we don't have
+        // the digits, and the model is allowed to call read_contact
+        // to resolve them when composing a reply (if it decides to
+        // reply at all).
+        val turnText = buildString {
+            append(AUTO_TRIAGE_PREFIX).append(' ')
+            append("sender=").append(escape(senderTitle)).append(' ')
+            append("app=").append(escape(pkg)).append('\n')
+            append("incoming: ").append(body)
+        }
+        runner.submit(text = turnText, fromVoice = false)
+    }
+
+    // ── Heuristics ──────────────────────────────────────────────────────
+
+    /**
+     * Cheap group detector. Caches no state — pure on the title+body.
+     * Conservative: we'd rather drop a genuine 1-on-1 than risk
+     * auto-replying into a 5-person group thread.
+     */
+    private fun looksLikeGroup(title: String, body: String): Boolean {
+        // Multi-recipient title — MMS group, or named WhatsApp group
+        // with comma-separated participants.
+        if (title.contains(',')) return true
+        // "(N messages)" / "(N)" → notification summary covering many
+        // unread items, almost always a group catch-up.
+        if (Regex("""\((\d+)\)|\((\d+)\s*messages?\)""", RegexOption.IGNORE_CASE).containsMatchIn(title)) return true
+        // Body prefixed with "<Name>:" where Name != title → message
+        // from a member inside a group chat (WhatsApp groups always
+        // surface as "GroupName" title + "Member: msg" body).
+        val m = Regex("""^([A-Za-z][A-Za-z0-9 ._'-]{0,30}):\s""").find(body)
+        if (m != null) {
+            val senderInBody = m.groupValues[1].trim()
+            if (!title.equals(senderInBody, ignoreCase = true) &&
+                !senderInBody.equals("You", ignoreCase = true)
+            ) {
+                return true
+            }
+        }
+        return false
+    }
+
+    /**
+     * Numeric shortcodes (5-6 digit "senders") and obvious bot
+     * patterns. Examples: "62951" (banking OTP), "AMAZON",
+     * "VERIFY-MTM". When the title carries no letters or is uppercase
+     * shouty, almost certainly automated.
+     */
+    private fun looksLikeAutomatedSender(title: String): Boolean {
+        if (title.isBlank()) return true
+        // Pure-digit short sender → carrier shortcode.
+        if (title.all { it.isDigit() } && title.length in 4..7) return true
+        // All-caps with no spaces or only special separators → brand
+        // tag like "AMAZON" / "VERIFY-NOW".
+        val allUpperNoSpace = title.uppercase() == title && !title.contains(' ')
+        if (allUpperNoSpace && title.length in 3..20 && title.any { it.isLetter() }) return true
+        return false
+    }
+
+    /**
+     * Restricted to known messaging apps so the triage path doesn't
+     * try to "reply" to a Tinder match notification or a YouTube
+     * comment alert. Conservative allowlist — extend as needed.
+     */
+    private fun isMessagingApp(pkg: String): Boolean = pkg in MESSAGING_APPS
+
     private fun escape(s: String): String = s.replace(' ', '_').replace('=', '_')
 
     companion object {
         private const val TAG = "Mythara/AutoReply"
 
-        /**
-         * Marker on the leading user-text line that flips the agent
-         * into "compose a reply for me" mode for this turn. Kept short
-         * because it's part of the persisted chat history.
-         */
+        /** Header tag for favorite-matched auto-replies. */
         const val AUTO_REPLY_PREFIX = "[auto-reply]"
+
+        /** Header tag for non-favorite smart-triage turns. */
+        const val AUTO_TRIAGE_PREFIX = "[auto-triage]"
+
+        /** Messaging-app allowlist for the triage route. */
+        private val MESSAGING_APPS: Set<String> = setOf(
+            "com.whatsapp",
+            "com.whatsapp.w4b",
+            "com.google.android.apps.messaging",
+            "com.samsung.android.messaging",
+            "org.thoughtcrime.securesms", // Signal
+            "org.telegram.messenger",
+            "com.facebook.orca", // Messenger
+            // Enterprise messengers covered by the enterprise gate
+            // upstream, listed here so they're still reachable when
+            // enterprise autopilot is on.
+            "com.microsoft.teams",
+            "com.microsoft.teams2",
+            "com.Slack",
+            "com.slack",
+            "com.google.android.apps.dynamite",
+        )
     }
 }

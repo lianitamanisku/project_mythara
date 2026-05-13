@@ -95,6 +95,9 @@ fun SettingsScreen(
         FavoritesPanel()
 
         Spacer(Modifier.height(16.dp))
+        AutoTriagePanel()
+
+        Spacer(Modifier.height(16.dp))
         AutoReplyPrefixPanel()
 
         Spacer(Modifier.height(16.dp))
