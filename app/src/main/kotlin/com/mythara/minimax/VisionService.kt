@@ -41,9 +41,20 @@ import javax.inject.Singleton
 @Singleton
 class VisionService @Inject constructor(
     private val settings: SettingsStore,
+    private val gemini: GeminiVisionService,
 ) {
-    /** Successful path: free-text description from VL-01. */
-    data class Outcome(val ok: Boolean, val text: String, val code: String? = null)
+    /**
+     * Successful path: free-text description from whichever vision
+     * model handled the call. [backend] reports which one was used so
+     * the tool result and any debug surface can attribute it.
+     */
+    data class Outcome(
+        val ok: Boolean,
+        val text: String,
+        val code: String? = null,
+        /** "gemini" | "minimax-vl" | null on early failure */
+        val backend: String? = null,
+    )
 
     /**
      * Send `imageFile` plus a textual `prompt` to MiniMax-VL-01.
@@ -64,9 +75,26 @@ class VisionService @Inject constructor(
             return@withContext Outcome(false, "Image file is missing or empty.", code = "no_image")
         }
         val snap = settings.snapshot()
+        // Prefer Gemini when the user has configured a Gemini key. It's
+        // the dedicated vision route — free-tier friendly, fast, no
+        // dependency on the MiniMax account having VL-01 access.
+        // Falls through to MiniMax-VL-01 only when Gemini isn't set.
+        if (!snap.geminiKey.isNullOrBlank()) {
+            val r = runCatching {
+                gemini.describeImage(imageFile = imageFile, prompt = prompt, apiKey = snap.geminiKey)
+            }.getOrElse { e ->
+                GeminiVisionService.Outcome(false, e.message ?: e.javaClass.simpleName, "threw")
+            }
+            return@withContext Outcome(
+                ok = r.ok,
+                text = r.text,
+                code = r.code,
+                backend = "gemini",
+            )
+        }
         val apiKey = snap.apiKey
         if (apiKey.isNullOrBlank()) {
-            return@withContext Outcome(false, "MiniMax API key not configured.", code = "missing_api_key")
+            return@withContext Outcome(false, "Neither Gemini nor MiniMax API key is configured.", code = "missing_api_key")
         }
 
         // Base64-encode the file. We cap at MAX_BYTES (~4MB pre-encode)
@@ -119,9 +147,9 @@ class VisionService @Inject constructor(
         }
         val text = res.body()?.choices?.firstOrNull()?.message?.content
         if (text.isNullOrBlank()) {
-            return@withContext Outcome(false, "Empty response from vision model.", code = "empty")
+            return@withContext Outcome(false, "Empty response from vision model.", code = "empty", backend = "minimax-vl")
         }
-        Outcome(ok = true, text = text.trim())
+        Outcome(ok = true, text = text.trim(), backend = "minimax-vl")
     }
 
     companion object {

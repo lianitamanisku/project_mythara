@@ -51,10 +51,12 @@ class TakePhotoTool @Inject constructor(
         val sizeBytes: Long,
         val lens: String,
         val captureTimeMs: Long,
-        /** Free-text description from MiniMax-VL-01. Null when vision failed. */
+        /** Free-text description from the vision backend. Null when vision failed. */
         val description: String? = null,
         /** Error code if vision call failed; null on success. */
         val visionError: String? = null,
+        /** Which vision backend handled the call: "gemini" | "minimax-vl". */
+        val visionBackend: String? = null,
     )
 
     override val name: String = "take_photo"
@@ -138,6 +140,7 @@ class TakePhotoTool @Inject constructor(
                     captureTimeMs = r.captureTimeMs,
                     description = visionOutcome.text.takeIf { visionOutcome.ok },
                     visionError = if (visionOutcome.ok) null else visionOutcome.code,
+                    visionBackend = visionOutcome.backend,
                 )
                 ToolResult(ok = true, output = JSON.encodeToString(Response.serializer(), response))
             }

@@ -148,6 +148,65 @@ fun SettingsScreen(
         }
 
         Spacer(Modifier.height(16.dp))
+        Panel("gemini vision key (optional)") {
+            var geminiInput by remember { mutableStateOf(state.geminiKey ?: "") }
+            LaunchedEffect(state.geminiKey) { geminiInput = state.geminiKey.orEmpty() }
+            OutlinedTextField(
+                value = geminiInput,
+                onValueChange = { geminiInput = it },
+                singleLine = true,
+                placeholder = { Text("AIza…", color = MytharaColors.FgDim) },
+                visualTransformation = PasswordVisualTransformation(),
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+                colors = OutlinedTextFieldDefaults.colors(
+                    focusedTextColor = MytharaColors.Fg,
+                    unfocusedTextColor = MytharaColors.Fg,
+                    focusedBorderColor = MytharaColors.Charple,
+                    unfocusedBorderColor = MytharaColors.SurfaceHigh,
+                    cursorColor = MytharaColors.Charple,
+                ),
+                modifier = Modifier.fillMaxWidth(),
+            )
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Button(
+                        onClick = { scope.launch { vm.saveAndValidateGemini(geminiInput) } },
+                        enabled = !state.geminiValidating && geminiInput.isNotBlank(),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = MytharaColors.Charple,
+                            contentColor = MytharaColors.Fg,
+                        ),
+                    ) {
+                        Text(if (state.geminiValidating) "${Glyph.Ellipsis} validating" else "${Glyph.Check} validate")
+                    }
+                    if (!state.geminiKey.isNullOrBlank()) {
+                        Spacer(Modifier.padding(start = 8.dp))
+                        TextButton(onClick = { scope.launch { vm.clearGeminiKey() } }) {
+                            Text("${Glyph.Cross} clear", color = MytharaColors.FgMute)
+                        }
+                    }
+                }
+                state.geminiValidation?.let { v ->
+                    val color = if (v.ok) MytharaColors.Julep else MytharaColors.Sriracha
+                    Text(
+                        text = "${if (v.ok) Glyph.Check else Glyph.Cross} ${v.message}",
+                        color = color,
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                }
+            }
+            Text(
+                text = "${Glyph.AccentBar} when set, take_photo sends captured images to gemini-2.5-flash (dedicated vision) instead of MiniMax-VL-01. Get a free-tier key at aistudio.google.com/app/apikey. Encrypted at rest with the same Keystore-backed AEAD as your MiniMax key.",
+                style = MaterialTheme.typography.bodySmall.copy(color = MytharaColors.FgDim),
+                modifier = Modifier.padding(top = 6.dp),
+            )
+        }
+
+        Spacer(Modifier.height(16.dp))
         Panel("model") {
             var open by remember { mutableStateOf(false) }
             Box {

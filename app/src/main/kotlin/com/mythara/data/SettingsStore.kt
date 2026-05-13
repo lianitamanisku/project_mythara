@@ -42,6 +42,12 @@ class SettingsStore @Inject constructor(
     private val keyApiKeyEncrypted = stringPreferencesKey("apiKey.encrypted")
     private val keyRegion          = stringPreferencesKey("region")
     private val keyModel           = stringPreferencesKey("model")
+    // Gemini Developer API key — optional secondary credential used
+    // exclusively for the take_photo vision route. When set, VisionService
+    // routes captured images through Gemini instead of MiniMax-VL-01.
+    // Lives in the same Tink-encrypted DataStore as the MiniMax key so
+    // it inherits the same Keystore-backed at-rest protection.
+    private val keyGeminiKeyEncrypted = stringPreferencesKey("geminiKey.encrypted")
 
     private val aead: Aead by lazy {
         AeadConfig.register()
@@ -71,6 +77,27 @@ class SettingsStore @Inject constructor(
         ctx.dataStore.edit { it[keyApiKeyEncrypted] = Base64.encodeToString(ct, Base64.NO_WRAP) }
     }
 
+    /**
+     * Read the Gemini vision key. Same Tink AEAD path as the MiniMax key.
+     * Returns null if not set.
+     */
+    fun geminiKeyFlow(): Flow<String?> = ctx.dataStore.data.map { prefs ->
+        prefs[keyGeminiKeyEncrypted]?.let { tryDecrypt(it) }
+    }
+
+    suspend fun setGeminiKey(plain: String) {
+        if (plain.isBlank()) {
+            ctx.dataStore.edit { it.remove(keyGeminiKeyEncrypted) }
+            return
+        }
+        val ct = aead.encrypt(plain.toByteArray(Charsets.UTF_8), null)
+        ctx.dataStore.edit { it[keyGeminiKeyEncrypted] = Base64.encodeToString(ct, Base64.NO_WRAP) }
+    }
+
+    suspend fun clearGeminiKey() {
+        ctx.dataStore.edit { it.remove(keyGeminiKeyEncrypted) }
+    }
+
     suspend fun setRegion(region: Region) {
         ctx.dataStore.edit { it[keyRegion] = region.name }
     }
@@ -86,6 +113,7 @@ class SettingsStore @Inject constructor(
             apiKey = prefs[keyApiKeyEncrypted]?.let { tryDecrypt(it) },
             region = Region.fromId(prefs[keyRegion]),
             model = prefs[keyModel] ?: DEFAULT_MODEL,
+            geminiKey = prefs[keyGeminiKeyEncrypted]?.let { tryDecrypt(it) },
         )
     }
 
@@ -94,7 +122,13 @@ class SettingsStore @Inject constructor(
         String(pt, Charsets.UTF_8)
     }.getOrNull()
 
-    data class Snapshot(val apiKey: String?, val region: Region, val model: String)
+    data class Snapshot(
+        val apiKey: String?,
+        val region: Region,
+        val model: String,
+        /** Optional Gemini vision key. Null means we fall back to MiniMax-VL-01. */
+        val geminiKey: String? = null,
+    )
 
     companion object {
         /**
