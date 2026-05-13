@@ -363,7 +363,10 @@ class ContactAnalyticsBuilder @Inject constructor(
      */
     private suspend fun runKeyPoints(displayName: String, text: String): List<String> {
         val prompt = buildKeyPointsPrompt(displayName, text)
-        val raw = runCatching { gemma.summarise(prompt, maxLen = KEY_POINTS_MAX_LEN) }.getOrNull()
+        // Use runRaw — summarise() wraps the prompt as content-to-be-
+        // summarised, which would collapse the JSON-array instruction
+        // into a paragraph (same bug Big Five hit before this fix).
+        val raw = runCatching { gemma.runRaw(prompt, maxLen = KEY_POINTS_MAX_LEN) }.getOrNull()
             ?: return emptyList()
         val arr = extractFirstJsonArray(raw) ?: return emptyList()
         return runCatching {
@@ -434,9 +437,9 @@ class ContactAnalyticsBuilder @Inject constructor(
         // the facts/mood it returns and look for the raw JSON in the
         // model's response by querying gemma.summarise (which returns
         // the LLM's literal output, not a parsed structure).
-        val raw = runCatching { gemma.summarise(prompt, maxLen = BIG_FIVE_MAX_LEN) }.getOrNull()
+        val raw = runCatching { gemma.runRaw(prompt, maxLen = BIG_FIVE_MAX_LEN) }.getOrNull()
         if (raw.isNullOrBlank()) {
-            Log.w(TAG, "big-five for $displayName: gemma.summarise returned ${if (raw == null) "null" else "blank"}")
+            Log.w(TAG, "big-five for $displayName: gemma.runRaw returned ${if (raw == null) "null" else "blank"}")
             return null
         }
         Log.d(TAG, "big-five for $displayName: raw gemma output (first 240 chars): ${raw.take(240)}")

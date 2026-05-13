@@ -135,6 +135,34 @@ class GemmaExtractor @Inject constructor(
         append("\n```\n\nReturn the summary now (no prefix, no quotes, just the summary text).")
     }
 
+    /**
+     * Send a fully-formed prompt to Gemma verbatim and return the
+     * raw text response. Unlike [summarise] and [extractWithMood],
+     * does NOT wrap the input in any system prompt — the caller is
+     * responsible for the entire prompt content.
+     *
+     * Used by [com.mythara.analytics.ContactAnalyticsBuilder] for its
+     * Big Five + key-points extraction passes, where the caller
+     * builds a structured JSON-output prompt and needs Gemma to act
+     * on it directly rather than treating it as content to summarise.
+     */
+    suspend fun runRaw(prompt: String, maxLen: Int = MAX_SUMMARY_LEN): String? {
+        if (prompt.isBlank()) return null
+        if (!store.isAvailable()) return null
+        return withContext(Dispatchers.Default) {
+            runCatching {
+                val eng = ensureEngine() ?: return@runCatching null
+                val reply: Message = eng.createConversation().use { conv ->
+                    conv.sendMessage(Message.of(prompt))
+                }
+                reply.text().trim().take(maxLen).ifBlank { null }
+            }.getOrElse { e ->
+                Log.w(TAG, "runRaw failed: ${e.message}")
+                null
+            }
+        }
+    }
+
     fun release() {
         runCatching { engine?.close() }
         engine = null
