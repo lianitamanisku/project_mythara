@@ -155,7 +155,11 @@ class AgentLoop @Inject constructor(
                     "(3) NEVER use markdown, lists, headers, code blocks, URLs, or bullets in spoken-style replies. " +
                     "(4) Numbers + symbols spoken-out ('5%' → 'five percent'). Drop URLs entirely unless the user asked for one. " +
                     "(5) If the full answer is long, lead with the headline and offer to go deeper ('want me to dig in?'). " +
-                    "(6) Real conversation has variety — sometimes a one-liner, sometimes a question back, sometimes 'I don't know'. Match the mood (see emotional-context message).",
+                    "(6) Real conversation has variety — sometimes a one-liner, sometimes a question back, sometimes 'I don't know'. Match the mood (see emotional-context message).\n\n" +
+                    "TOOL-USE RULES — read carefully, the user has been burned by violations:\n" +
+                    "  • If a tool RETURNS the data the user asked for (e.g. list_calendar_events returns a JSON list of events), DO NOT also call open_app to 'show' them the data in the original app. The user asked for the answer, not the app launch. Just relay the data in your reply.\n" +
+                    "  • Only call open_app, place_call, send_sms_direct, send_whatsapp, tap, swipe, type_text, or any other side-effect tool when the user EXPLICITLY asked for that action ('open Spotify', 'text mom', 'tap that button'). 'list X' / 'show me X' / 'what's on X' = read-only, never launch the app.\n" +
+                    "  • Pushing the user out of Mythara mid-conversation is a UX failure. If you need to launch something, say so first and confirm intent on the next turn.",
         )
 
         // ElevenLabs audio tags. When the user has the EL TTS route

@@ -60,6 +60,7 @@ class AgentRunner @Inject constructor(
     private val languageDetector: LanguageDetector,
     private val moodTracker: com.mythara.agent.mood.ChatMoodTracker,
     private val settings: com.mythara.data.SettingsStore,
+    private val replyNotification: ReplyNotification,
 ) {
     /**
      * Process-wide scope. SupervisorJob so one failing turn doesn't
@@ -138,7 +139,7 @@ class AgentRunner @Inject constructor(
                 agent.submit(text, fromVoice = fromVoice).collect { turn ->
                     _turnEvents.tryEmit(turn)
                     if (turn is AgentLoop.Turn.Finished) {
-                        speakIfNeeded(turn)
+                        deliverFinished(turn)
                     }
                 }
             } catch (t: Throwable) {
@@ -177,6 +178,28 @@ class AgentRunner @Inject constructor(
                     AgentForegroundService.stop(ctx)
                 }
             }
+        }
+    }
+
+    /**
+     * After every Finished turn, two deliveries happen:
+     *  - TTS (always — drives the audio reply path)
+     *  - ReplyNotification (only when Mythara isn't visible — covers
+     *    the case where a tool call sent the user to another app,
+     *    or the screen is off entirely, so they don't have to
+     *    navigate back to find the answer)
+     */
+    private suspend fun deliverFinished(turn: AgentLoop.Turn.Finished) {
+        speakIfNeeded(turn)
+        // Reply notification: strip <think> + audio tags + markdown
+        // before showing so the shade text is human-readable.
+        val cleaned = Thinks.strip(turn.finalText)
+            .removeSuffix(" [hit max iterations]")
+        val displayText = SpokenText.forSpeech(cleaned, keepAudioTags = false)
+        val nosurface = cleaned.trim()
+            .equals(AgentLoop.NOSURFACE_TOKEN, ignoreCase = true)
+        if (displayText.isNotBlank() && !nosurface) {
+            replyNotification.postIfBackgrounded(displayText)
         }
     }
 
