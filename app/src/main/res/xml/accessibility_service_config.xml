@@ -7,6 +7,13 @@
     canPerformGestures — required for the M6 automation tools (tap,
         swipe, etc.). Declared up-front so the user grants both at the
         same toggle — granting accessibility twice would be awkward UX.
+    canTakeScreenshot — REQUIRED on Android 11+ (API 30) for the
+        AccessibilityService.takeScreenshot() call used by the
+        `screenshot_view` tool. Without this attribute the framework
+        throws "Services don't have the capability of taking the
+        screenshot." regardless of permission grant state. No
+        separate user grant — the existing accessibility toggle covers
+        it. Older devices ignore the attribute safely.
     flagReportViewIds — surfaces R.id resource names in node info, which
         helps disambiguate buttons that share text labels.
     flagDefault — the standard event delivery model.
@@ -26,6 +33,7 @@
     android:accessibilityFlags="flagDefault|flagReportViewIds|flagIncludeNotImportantViews"
     android:canPerformGestures="true"
     android:canRetrieveWindowContent="true"
+    android:canTakeScreenshot="true"
     android:description="@string/accessibility_service_description"
     android:notificationTimeout="100"
     android:settingsActivity="com.mythara.MainActivity" />
