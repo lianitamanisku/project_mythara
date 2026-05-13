@@ -209,11 +209,38 @@ class MessagePersonaExtractor @Inject constructor(
         allMessages: List<MessageRecord>,
         now: Long,
     ): Int {
-        val convo = allMessages.filter {
-            it.contact?.equals(contactName, ignoreCase = true) == true ||
-                (it.isFromUser && hasNearbyContactMessages(it, allMessages, contactName))
+        // Identify which sender label represents the user. WhatsApp's
+        // export uses "You" in some locales/versions, but on modern
+        // Android it usually uses the user's saved display name —
+        // in which case isFromUser is false and contact = userName.
+        // For a 1-on-1 export (exactly two distinct contact labels),
+        // the user is whichever name ISN'T the target contact.
+        val distinctSenders = allMessages
+            .mapNotNull { it.contact }
+            .filter { it.isNotBlank() }
+            .distinct()
+        val userSenderName: String? = when (distinctSenders.size) {
+            2 -> distinctSenders.firstOrNull { !it.equals(contactName, ignoreCase = true) }
+            else -> null // group chat or already-attributed; fall back to isFromUser flag
+        }
+
+        val convo = allMessages.filter { m ->
+            // contact's incoming
+            (m.contact?.equals(contactName, ignoreCase = true) == true && m.contact != userSenderName) ||
+                // user's outgoing under "You" labelling
+                (m.isFromUser && hasNearbyContactMessages(m, allMessages, contactName)) ||
+                // user's outgoing under display-name labelling
+                (userSenderName != null && m.contact?.equals(userSenderName, ignoreCase = true) == true)
         }
         if (convo.isEmpty()) return 0
+
+        Log.d(
+            TAG,
+            "ingestContact($contactName): userSenderName=${userSenderName ?: "<\"You\"-flag>"} " +
+                "convoSize=${convo.size} " +
+                "in=${convo.count { it.contact?.equals(contactName, true) == true && !it.isFromUser }} " +
+                "out=${convo.count { it.isFromUser || (userSenderName != null && it.contact?.equals(userSenderName, true) == true) }}",
+        )
         var written = 0
 
         // a) Persist conversation excerpts as message-history rows.
@@ -222,10 +249,16 @@ class MessagePersonaExtractor @Inject constructor(
         //    facets.
         val chunks = chunkConversation(convo)
         for (chunk in chunks.take(MAX_HISTORY_CHUNKS_PER_CONTACT)) {
-            val excerpt = buildBidirectionalTranscript(chunk).take(HISTORY_EXCERPT_MAX_CHARS)
+            val excerpt = buildBidirectionalTranscript(chunk, userSenderName).take(HISTORY_EXCERPT_MAX_CHARS)
             if (excerpt.isBlank()) continue
-            val incomingInChunk = chunk.count { !it.isFromUser }
-            val outgoingInChunk = chunk.count { it.isFromUser }
+            // Count user-direction messages by either signal: isFromUser
+            // (when "You" labelling worked) OR contact = the inferred
+            // user sender name.
+            val outgoingInChunk = chunk.count { m ->
+                m.isFromUser ||
+                    (userSenderName != null && m.contact?.equals(userSenderName, ignoreCase = true) == true)
+            }
+            val incomingInChunk = chunk.size - outgoingInChunk
             val facets = buildList {
                 add("kind:message-history")
                 add("source:import-$source")
@@ -266,7 +299,12 @@ class MessagePersonaExtractor @Inject constructor(
         //    the builder will produce summary / Big Five / key
         //    points later from the message-history rows above.
         if (gemma.isReady()) {
-            val theirMessages = convo.filter { !it.isFromUser }
+            // Contact's own messages = NOT user-sent (either by
+            // isFromUser flag OR by display-name labelling).
+            val theirMessages = convo.filter { m ->
+                !m.isFromUser &&
+                    !(userSenderName != null && m.contact?.equals(userSenderName, ignoreCase = true) == true)
+            }
             if (theirMessages.size >= MIN_PER_CONTACT_GEMMA_SAMPLE) {
                 val theirChunks = chunkMessages(theirMessages).take(GEMMA_MAX_CHUNKS_PER_CONTACT)
                 val collected = mutableListOf<String>()
@@ -357,9 +395,14 @@ class MessagePersonaExtractor @Inject constructor(
         return out
     }
 
-    private fun buildBidirectionalTranscript(chunk: List<MessageRecord>): String =
+    private fun buildBidirectionalTranscript(
+        chunk: List<MessageRecord>,
+        userSenderName: String? = null,
+    ): String =
         chunk.joinToString("\n") { m ->
-            val who = if (m.isFromUser) "User" else (m.contact ?: "Other")
+            val isUserSent = m.isFromUser ||
+                (userSenderName != null && m.contact?.equals(userSenderName, ignoreCase = true) == true)
+            val who = if (isUserSent) "User" else (m.contact ?: "Other")
             "$who: ${m.text}"
         }
 
