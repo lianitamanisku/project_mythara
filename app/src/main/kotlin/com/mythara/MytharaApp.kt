@@ -6,7 +6,13 @@ import androidx.work.Configuration
 import com.mythara.agent.SelfOrganizerScheduler
 import com.mythara.growth.GrowthScheduler
 import com.mythara.memory.MemorySyncScheduler
+import com.mythara.voice.QuickTalkNotification
+import com.mythara.voice.QuickTalkSettings
 import dagger.hilt.android.HiltAndroidApp
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 import javax.inject.Inject
 
 /**
@@ -26,6 +32,14 @@ class MytharaApp : Application(), Configuration.Provider {
     @Inject lateinit var growthScheduler: GrowthScheduler
     @Inject lateinit var memorySyncScheduler: MemorySyncScheduler
     @Inject lateinit var selfOrganizerScheduler: SelfOrganizerScheduler
+    @Inject lateinit var quickTalkNotification: QuickTalkNotification
+    @Inject lateinit var quickTalkSettings: QuickTalkSettings
+
+    // App-scoped supervisor for fire-and-forget process-level
+    // coroutines (settings-flow observers etc.). Cancelled implicitly
+    // when the process dies; we don't need explicit teardown for an
+    // application-scoped object.
+    private val appScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
     override val workManagerConfiguration: Configuration
         get() = Configuration.Builder()
@@ -37,5 +51,16 @@ class MytharaApp : Application(), Configuration.Provider {
         growthScheduler.start()
         memorySyncScheduler.start()
         selfOrganizerScheduler.start()
+        // Reflect the user's persistent-talk-notification preference
+        // on every cold start (and follow live toggles while the
+        // process is alive). Observing the Flow rather than reading
+        // once means flipping the toggle in Settings posts/cancels
+        // the notification immediately without a process restart.
+        appScope.launch {
+            quickTalkSettings.enabledFlow().collect { enabled ->
+                if (enabled) quickTalkNotification.show()
+                else quickTalkNotification.cancel()
+            }
+        }
     }
 }

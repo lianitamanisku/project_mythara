@@ -379,6 +379,9 @@ fun SettingsScreen(
         }
 
         Spacer(Modifier.height(16.dp))
+        QuickTalkPanel()
+
+        Spacer(Modifier.height(16.dp))
         AssistantDefaultPanel()
 
         Spacer(Modifier.height(16.dp))
