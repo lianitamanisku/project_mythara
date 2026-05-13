@@ -4,6 +4,9 @@ import android.content.Context
 import android.speech.tts.TextToSpeech
 import android.speech.tts.UtteranceProgressListener
 import dagger.hilt.android.qualifiers.ApplicationContext
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import java.util.Locale
 import java.util.UUID
 import javax.inject.Inject
@@ -24,6 +27,16 @@ class Tts @Inject constructor(@ApplicationContext private val ctx: Context) {
     @Volatile private var engine: TextToSpeech? = null
     @Volatile private var ready: Boolean = false
 
+    /**
+     * Live "TTS is producing audio right now" flag. The chat surface
+     * consumes this to pause its continuous SpeechRecognizer loop —
+     * without that pause, the mic would pick up Lumi's own voice
+     * playing through the speaker and try to transcribe it, looping
+     * the assistant back on itself.
+     */
+    private val _speaking = MutableStateFlow(false)
+    val speaking: StateFlow<Boolean> = _speaking.asStateFlow()
+
     fun init() {
         if (engine != null) return
         engine = TextToSpeech(ctx) { status ->
@@ -31,10 +44,18 @@ class Tts @Inject constructor(@ApplicationContext private val ctx: Context) {
             if (ready) {
                 engine?.language = Locale.getDefault()
                 engine?.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
-                    override fun onStart(utteranceId: String?) {}
-                    override fun onDone(utteranceId: String?) {}
-                    @Deprecated("kept for API < 21") override fun onError(utteranceId: String?) {}
-                    override fun onError(utteranceId: String?, errorCode: Int) {}
+                    override fun onStart(utteranceId: String?) {
+                        _speaking.value = true
+                    }
+                    override fun onDone(utteranceId: String?) {
+                        _speaking.value = false
+                    }
+                    @Deprecated("kept for API < 21") override fun onError(utteranceId: String?) {
+                        _speaking.value = false
+                    }
+                    override fun onError(utteranceId: String?, errorCode: Int) {
+                        _speaking.value = false
+                    }
                 })
             }
         }
@@ -73,7 +94,15 @@ class Tts @Inject constructor(@ApplicationContext private val ctx: Context) {
         }
     }
 
-    fun stop() { engine?.stop() }
+    fun stop() {
+        engine?.stop()
+        _speaking.value = false
+    }
 
-    fun shutdown() { engine?.shutdown(); engine = null; ready = false }
+    fun shutdown() {
+        engine?.shutdown()
+        engine = null
+        ready = false
+        _speaking.value = false
+    }
 }

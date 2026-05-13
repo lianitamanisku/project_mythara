@@ -42,6 +42,15 @@ class ChatViewModel @Inject constructor(
         viewModelScope.launch {
             lumiListenerStore.wakeQueries.collect { wq -> submit(wq.query) }
         }
+        // Plumb TTS "is speaking right now" up to the UI so the
+        // continuous-voice loop can pause while Lumi is replying out
+        // loud — otherwise the mic picks up the assistant's own voice
+        // and starts transcribing it.
+        viewModelScope.launch {
+            tts.speaking.collect { sp ->
+                _ui.update { it.copy(speaking = sp) }
+            }
+        }
     }
 
     /**

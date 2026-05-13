@@ -48,10 +48,21 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.core.content.ContextCompat
 import com.mythara.mic.ContinuousSpeechRecognition
 import com.mythara.mic.SpeechRecognition
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import com.mythara.ui.theme.Glyph
 import com.mythara.ui.theme.JetBrainsMono
 import com.mythara.ui.theme.MytharaColors
 import com.mythara.ui.theme.MytharaWordmark
+
+/**
+ * How long the continuous-voice mode waits after the user stops
+ * talking before sending the accumulated utterance to the agent.
+ * Set per user request: lets multi-clause thoughts ("Hey Lumi,
+ * what's the weather, actually also tell me ...") concatenate
+ * before the agent fires.
+ */
+private const val SILENCE_TIMEOUT_MS = 5_000L
 
 /**
  * Main chat surface. Pulls state from [ChatViewModel] and renders the
@@ -69,20 +80,29 @@ fun ChatScreen(
     val ui by vm.ui.collectAsState()
     val insets = WindowInsets.systemBars.asPaddingValues()
 
-    // Continuous-mode driver: when the toggle is on, we keep an
-    // always-listening on-device SpeechRecognizer loop running and
-    // submit each final utterance into the agent. The loop is bound
-    // to this composition's lifecycle — leaving the chat screen tears
-    // it down. Permission is checked here so the LaunchedEffect can
-    // bail cleanly if RECORD_AUDIO isn't granted (mode flips back off).
+    // Continuous-mode driver. Two behavioural notes the original v1
+    // didn't get right:
+    //   1. Submit-on-pause, not submit-on-Final. Soda's idea of
+    //      end-of-utterance fires after ~1-2s of silence; the user
+    //      wanted a 5s window so multi-sentence thoughts ("Hey Lumi,
+    //      ... actually, can you also ...") concatenate into one
+    //      query before the agent kicks in.
+    //   2. Mute the mic while Lumi is speaking out loud. Otherwise
+    //      the on-device recogniser transcribes the assistant's own
+    //      TTS reply and the loop runs away from itself. We key the
+    //      LaunchedEffect on `!ui.speaking` so the recogniser is torn
+    //      down when TTS starts and recreated when it ends — Soda
+    //      bring-up is fast enough (~100ms) that this is invisible
+    //      to a conversational cadence.
     val ctx = LocalContext.current
     val permLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission(),
     ) { granted ->
         if (!granted) vm.setContinuousMode(false)
     }
-    LaunchedEffect(ui.continuousMode) {
+    LaunchedEffect(ui.continuousMode, ui.speaking) {
         if (!ui.continuousMode) return@LaunchedEffect
+        if (ui.speaking) return@LaunchedEffect
         val granted = ContextCompat.checkSelfPermission(
             ctx, Manifest.permission.RECORD_AUDIO,
         ) == PackageManager.PERMISSION_GRANTED
@@ -90,26 +110,48 @@ fun ChatScreen(
             permLauncher.launch(Manifest.permission.RECORD_AUDIO)
             return@LaunchedEffect
         }
-        // Pixel devices ship Soda on-device since API 31; quality is
-        // far above Vosk-small-en for proper nouns + conversational
-        // English. Free and unlimited.
-        ContinuousSpeechRecognition.listenContinuously(ctx).collect { ev ->
-            when (ev) {
-                is SpeechRecognition.Event.Final -> {
-                    val text = ev.text.trim()
-                    if (text.isNotBlank() && !ui.thinking) {
+
+        // Pending-utterance buffer. Each Soda Final appends to it;
+        // a 5-second silence (no Partial since the last word) triggers
+        // a submit. Partials reset the timer. This lets the user pause
+        // mid-thought without the agent firing prematurely.
+        val pending = StringBuilder()
+        var commitJob: kotlinx.coroutines.Job? = null
+        fun resetCommitTimer() {
+            commitJob?.cancel()
+            commitJob = launch {
+                kotlinx.coroutines.delay(SILENCE_TIMEOUT_MS)
+                val text = pending.toString().trim()
+                if (text.isNotEmpty()) {
+                    pending.clear()
+                    if (!ui.thinking && !ui.speaking) {
                         vm.submit(text)
                     }
                 }
+            }
+        }
+
+        ContinuousSpeechRecognition.listenContinuously(ctx).collect { ev ->
+            when (ev) {
+                is SpeechRecognition.Event.Partial -> {
+                    // User is still speaking — push the silence-timer
+                    // out. The Final will land in a moment.
+                    commitJob?.cancel()
+                }
+                is SpeechRecognition.Event.Final -> {
+                    val text = ev.text.trim()
+                    if (text.isNotBlank()) {
+                        if (pending.isNotEmpty()) pending.append(' ')
+                        pending.append(text)
+                        resetCommitTimer()
+                    }
+                }
                 is SpeechRecognition.Event.Error -> {
-                    // Silent for transient states (idle / no-speech /
-                    // recogniser-busy); surface the rest so the user
-                    // sees obvious breakage.
                     if (!ContinuousSpeechRecognition.isTransient(ev.code)) {
                         android.util.Log.w("Mythara/Chat", "continuous SR error: ${ev.message}")
                     }
                 }
-                else -> { /* Partial / Ready / EndOfSpeech — ignore at chat level */ }
+                else -> { /* Ready / EndOfSpeech — no-op */ }
             }
         }
     }
