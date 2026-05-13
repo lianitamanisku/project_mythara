@@ -6,8 +6,8 @@ import com.mythara.growth.LearningJournal
 import com.mythara.memory.Tier
 import com.mythara.secret.observe.embed.EmbeddingsModelStore
 import com.mythara.secret.observe.embed.LocalEmbedder
-import com.mythara.secret.observe.extract.LearningExtractor
 import com.mythara.secret.observe.extract.LumiNoteDetector
+import com.mythara.secret.observe.extract.SemanticExtractor
 import com.mythara.secret.observe.speaker.SpeakerVault
 import com.mythara.secret.observe.vault.LearningVault
 import com.mythara.secret.observe.vosk.VoskAsr
@@ -55,7 +55,7 @@ class ObserveSession @Inject constructor(
     private val asr: VoskAsr,
     private val embedder: LocalEmbedder,
     private val vault: LearningVault,
-    private val extractor: LearningExtractor,
+    private val extractor: SemanticExtractor,
     private val journal: LearningJournal,
     private val speakerVault: SpeakerVault,
 ) {
@@ -232,26 +232,49 @@ class ObserveSession @Inject constructor(
 
         // 2b. Heuristic / Gemma-extracted semantic facts. These DO sync —
         //     they're durable observations about the user, not raw audio
-        //     content. Quality is coarse on the heuristic path; the
-        //     Gemma extractor takes over when its model is loaded.
+        //     content. SemanticExtractor picks Gemma when its model is
+        //     loaded, falls back to heuristic regex otherwise. Gemma
+        //     also returns a single mood label for the whole transcript
+        //     which lands as `mood:<label>` on every record produced
+        //     here AND on the working-tier transcript record above
+        //     (back-patched into the transcript's facets via the
+        //     existing seen-bump path; for v1 we leave the working
+        //     record's mood facet absent — mood is a Gemma-only signal
+        //     attached to derived semantic facts).
+        val extractionResult = runCatching { extractor.extract(text) }.getOrNull()
+        val moodFacet = extractionResult?.mood?.let { "mood:$it" }
         var semanticCount = 0
-        for (fact in extractor.extract(text)) {
-            val factEmbedding = if (embedder.isReady()) {
-                runCatching { embedder.embed(fact.content) }.getOrNull()
-            } else null
-            val factFacets = if (speakerFacet != null) fact.facets + speakerFacet else fact.facets
-            val added = vault.add(
-                content = fact.content,
-                tier = Tier.Semantic,
-                src = "extract:heuristic",
-                facets = factFacets,
-                embedding = factEmbedding,
-                embModel = if (factEmbedding != null) EmbeddingsModelStore.MODEL_ID else null,
-                ref = refId,
-                conf = fact.conf,
-                now = now,
-            )
-            if (added) semanticCount++
+        if (extractionResult != null) {
+            val srcTag = "extract:${extractionResult.source}"
+            for (fact in extractionResult.facts) {
+                val factEmbedding = if (embedder.isReady()) {
+                    runCatching { embedder.embed(fact.content) }.getOrNull()
+                } else null
+                val factFacets = buildList {
+                    addAll(fact.facets)
+                    if (speakerFacet != null && fact.facets.none { it.startsWith("speaker:") }) {
+                        add(speakerFacet)
+                    }
+                    if (moodFacet != null && fact.facets.none { it.startsWith("mood:") }) {
+                        add(moodFacet)
+                    }
+                }
+                val added = vault.add(
+                    content = fact.content,
+                    tier = Tier.Semantic,
+                    src = srcTag,
+                    facets = factFacets,
+                    embedding = factEmbedding,
+                    embModel = if (factEmbedding != null) EmbeddingsModelStore.MODEL_ID else null,
+                    ref = refId,
+                    conf = fact.conf,
+                    now = now,
+                )
+                if (added) semanticCount++
+            }
+            if (extractionResult.mood != null) {
+                Log.d(TAG, "transcript mood: ${extractionResult.mood} (via ${extractionResult.source})")
+            }
         }
 
         // Metadata-only journal entry — never the transcript text.

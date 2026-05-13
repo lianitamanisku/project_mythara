@@ -60,27 +60,45 @@ class GemmaExtractor @Inject constructor(
 
     private val json = Json { ignoreUnknownKeys = true; isLenient = true }
 
+    /**
+     * What [extractWithMood] returns: durable facts (same shape as
+     * the heuristic extractor) plus a single mood label inferred from
+     * the whole transcript. Mood labels are constrained to a small
+     * set ([MOOD_LABELS]) so they're queryable as a facet without an
+     * explosion of synonyms.
+     */
+    data class Result(
+        val facts: List<LearningExtractor.Extracted>,
+        val mood: String? = null,
+    )
+
     fun isReady(): Boolean = store.isAvailable()
 
-    suspend fun extract(transcript: String): List<LearningExtractor.Extracted> {
-        if (transcript.isBlank()) return emptyList()
-        if (!store.isAvailable()) return emptyList()
+    /**
+     * Lift facts + mood from a transcript in one Gemma inference.
+     * Returns empty facts + null mood if Gemma isn't loaded yet.
+     */
+    suspend fun extractWithMood(transcript: String): Result {
+        if (transcript.isBlank()) return Result(emptyList(), null)
+        if (!store.isAvailable()) return Result(emptyList(), null)
         return withContext(Dispatchers.Default) {
             runCatching {
-                val eng = ensureEngine() ?: return@runCatching emptyList()
+                val eng = ensureEngine() ?: return@runCatching Result(emptyList(), null)
                 val prompt = buildPrompt(transcript)
-                // One-shot: each transcript is independent, so a fresh
-                // conversation guarantees no state bleed between extractions.
                 val reply: Message = eng.createConversation().use { conv ->
                     conv.sendMessage(Message.of(prompt))
                 }
-                parseFacts(reply.text())
+                parseResult(reply.text())
             }.getOrElse { e ->
                 Log.w(TAG, "extract failed: ${e.message}")
-                emptyList()
+                Result(emptyList(), null)
             }
         }
     }
+
+    /** Back-compat for callers that only care about facts. */
+    suspend fun extract(transcript: String): List<LearningExtractor.Extracted> =
+        extractWithMood(transcript).facts
 
     fun release() {
         runCatching { engine?.close() }
@@ -129,23 +147,45 @@ class GemmaExtractor @Inject constructor(
             append("\n\nTranscript:\n```\n")
             append(transcript.take(MAX_TRANSCRIPT_CHARS))
             append("\n```\n\n")
-            append("Return the JSON array now.")
+            append("Return the JSON object now.")
         }
     }
 
     /**
-     * Forgiving parser. Looks for the outermost balanced `[...]` in the
-     * model's response, parses it as JSON, then walks each object.
-     * Anything malformed gets quietly dropped.
+     * Forgiving parser. Expects an object response of the form:
+     *   {"facts": [...], "mood": "calm"}
+     * If the LLM emits just an array (no wrapping object) — which can
+     * happen for older prompts or when it forgets the schema — fall
+     * back to treating that as the facts array with no mood. Any
+     * other shape returns empty.
      */
-    private fun parseFacts(response: String): List<LearningExtractor.Extracted> {
-        val arrayText = extractFirstJsonArray(response) ?: return emptyList()
-        val arr: JsonArray = runCatching {
-            json.parseToJsonElement(arrayText) as? JsonArray
-        }.getOrNull() ?: return emptyList()
+    private fun parseResult(response: String): Result {
+        val objText = extractFirstJsonObject(response)
+        val arrayText = if (objText == null) extractFirstJsonArray(response) else null
+
+        val factsJson: JsonArray = when {
+            objText != null -> runCatching {
+                val root = json.parseToJsonElement(objText) as? JsonObject
+                root?.get("facts") as? JsonArray
+            }.getOrNull()
+            arrayText != null -> runCatching {
+                json.parseToJsonElement(arrayText) as? JsonArray
+            }.getOrNull()
+            else -> null
+        } ?: return Result(emptyList(), null)
+
+        val mood = if (objText != null) {
+            runCatching {
+                val root = json.parseToJsonElement(objText) as? JsonObject
+                root?.get("mood")?.jsonPrimitive?.contentOrNullSafe()
+                    ?.trim()?.lowercase()?.takeIf { it in MOOD_LABELS }
+            }.getOrNull()
+        } else null
+
+        val moodFacet = mood?.let { "mood:$it" }
 
         val out = mutableListOf<LearningExtractor.Extracted>()
-        for (el in arr) {
+        for (el in factsJson) {
             val obj = (el as? JsonObject) ?: continue
             val content = obj["content"]?.jsonPrimitive?.contentOrNullSafe()?.trim().orEmpty()
             if (content.isBlank() || content.length > MAX_CONTENT_LEN) continue
@@ -156,19 +196,41 @@ class GemmaExtractor @Inject constructor(
                 if (kind.isNotBlank()) add("kind:$kind")
                 if (topic.isNotBlank()) add("topic:$topic")
                 add("extractor:${GemmaModelStore.MODEL_ID}")
+                // Attach mood to every fact derived from this
+                // transcript so retrieval-by-mood works
+                // ("things I said when frustrated").
+                if (moodFacet != null) add(moodFacet)
             }
             out.add(
                 LearningExtractor.Extracted(
                     content = content,
                     facets = facets,
-                    // Gemma 4 E2B extractions are sharper than 3-1B — bump
-                    // baseline confidence to 0.85. Downgrade later if
-                    // calibration shows false positives.
                     conf = 0.85,
                 ),
             )
         }
-        return out.distinctBy { it.content.lowercase() }
+        return Result(facts = out.distinctBy { it.content.lowercase() }, mood = mood)
+    }
+
+    private fun extractFirstJsonObject(text: String): String? {
+        val start = text.indexOf('{')
+        if (start < 0) return null
+        var depth = 0
+        var inString = false
+        var escape = false
+        for (i in start until text.length) {
+            val c = text[i]
+            if (escape) { escape = false; continue }
+            if (c == '\\') { escape = true; continue }
+            if (c == '"') { inString = !inString; continue }
+            if (inString) continue
+            if (c == '{') depth++
+            else if (c == '}') {
+                depth--
+                if (depth == 0) return text.substring(start, i + 1)
+            }
+        }
+        return null
     }
 
     private fun extractFirstJsonArray(text: String): String? {
@@ -206,20 +268,34 @@ class GemmaExtractor @Inject constructor(
         private const val MAX_TRANSCRIPT_CHARS = 2_000
         private const val MAX_CONTENT_LEN = 200
 
-        private const val SYSTEM_PROMPT = """You extract durable personal facts from a transcript of speech.
+        /**
+         * Allowed mood labels. Conservative set — large enough to be
+         * useful as a queryable facet ("things I said when anxious")
+         * without exploding into a long tail of synonyms.
+         */
+        val MOOD_LABELS = setOf(
+            "calm", "happy", "excited", "anxious", "frustrated",
+            "sad", "neutral", "unknown",
+        )
+
+        private const val SYSTEM_PROMPT = """You extract durable personal facts AND the user's emotional state from a transcript of speech.
 
 ALL output is in English. If the transcript is in another language, translate the extracted facts into clear English. Never emit non-English content.
 
-Return ONLY a JSON array. No prose, no markdown, no code fences.
+Return ONLY a JSON object with two fields: "facts" (array) and "mood" (string). No prose, no markdown, no code fences.
 
-Each element is: {"content": "<short statement>", "kind": "<category>", "topic": "<topic-slug>"}
+Schema:
+  {"facts": [{"content": "<short statement>", "kind": "<category>", "topic": "<topic-slug>"}], "mood": "<label>"}
+
+Mood labels (pick exactly one): calm, happy, excited, anxious, frustrated, sad, neutral, unknown. Use "unknown" if you can't tell.
 
 Rules:
 - A durable fact is something the user would want remembered for weeks/months (not "I'm hungry now", not "it's raining today").
 - Categories ("kind"): preference, identity, attribute, event, fact, schedule, interest.
 - "content" is in third-person English describing the user. e.g., "user prefers Python over Java".
 - "topic" is a single hyphenated English slug (e.g., "python", "favourite-colour", "morning-routine"). Always English even if the transcript is in another language.
-- Skip transcripts that yield nothing. Return [] in that case.
+- "mood" reflects how the USER (the speaker) seems to be feeling in this transcript, based on word choice and content. Not the topic's emotional valence.
+- Skip transcripts that yield no facts. Return {"facts": [], "mood": "<your guess>"} in that case.
 - Do NOT invent facts; only extract what was clearly stated.
 - Do NOT include the source-language text in the output; only the English translation."""
     }
