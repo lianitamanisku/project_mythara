@@ -234,20 +234,31 @@ class MessagePersonaExtractor @Inject constructor(
                 add("direction:both")
                 add("imported:true")
             }
+            // Embed the excerpt when the local embedder is loaded so
+            // SemanticRecall surfaces this history later when the user
+            // chats about the same person / topic / event. Without an
+            // embedding the recall layer falls back to facet+content
+            // string matching, which mostly works on name mentions but
+            // misses semantic similarity ("did Mom mention her surgery"
+            // matching an excerpt where she said "the doctor said
+            // recovery is going well").
+            val embedding = runCatching {
+                if (embedder.isReady()) embedder.embed(excerpt) else null
+            }.getOrNull()
             val ok = runCatching {
                 vault.add(
                     content = excerpt,
                     tier = Tier.Working,
                     src = "msg:import-$source",
                     facets = facets,
-                    embedding = null,
-                    embModel = null,
+                    embedding = embedding,
+                    embModel = if (embedding != null) com.mythara.secret.observe.embed.EmbeddingsModelStore.MODEL_ID else null,
                     conf = 0.7,
                     now = now,
                 )
             }.getOrDefault(false)
             if (ok) written++
-            Log.d(TAG, "  history chunk for $contactName: ${chunk.size} msgs (${incomingInChunk} in / ${outgoingInChunk} out) → ok=$ok")
+            Log.d(TAG, "  history chunk for $contactName: ${chunk.size} msgs (${incomingInChunk} in / ${outgoingInChunk} out) → ok=$ok embed=${embedding != null}")
         }
 
         // b) Gemma pass on the contact's OWN messages to extract
@@ -280,14 +291,17 @@ class MessagePersonaExtractor @Inject constructor(
                         add("contact:$contactName")
                         add("trait:gemma-extracted-import")
                     }
+                    val traitEmbedding = runCatching {
+                        if (embedder.isReady()) embedder.embed(line) else null
+                    }.getOrNull()
                     val ok = runCatching {
                         vault.add(
                             content = line,
                             tier = Tier.Semantic,
                             src = "persona:import-$source",
                             facets = facets,
-                            embedding = null,
-                            embModel = null,
+                            embedding = traitEmbedding,
+                            embModel = if (traitEmbedding != null) com.mythara.secret.observe.embed.EmbeddingsModelStore.MODEL_ID else null,
                             conf = 0.8,
                             now = now,
                         )

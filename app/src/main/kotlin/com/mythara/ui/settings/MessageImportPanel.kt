@@ -89,42 +89,59 @@ class MessageImportPanelViewModel @Inject constructor(
         }
     }
 
-    fun importWhatsApp(uri: Uri) {
+    fun importWhatsApp(uris: List<Uri>) {
+        if (uris.isEmpty()) return
         viewModelScope.launch {
             _busy.value = true
-            _status.value = "${Glyph.Ellipsis} parsing WhatsApp export…"
-            val out = runCatching { waImporter.import(uri) }.getOrElse {
-                _status.value = "× ${it.message ?: "parse failed"}"
-                _busy.value = false
-                return@launch
-            }
-            if (!out.ok) {
-                _status.value = "× ${out.detail ?: "couldn't parse export"}"
-                _busy.value = false
-                return@launch
-            }
-            _status.value = "${Glyph.Ellipsis} analysing ${out.messages.size} messages (Gemma pass may take ~2 min)…"
-            val report = runCatching { extractor.extractAndPersist("whatsapp", out.messages) }
-                .getOrElse {
-                    _status.value = "× analysis failed: ${it.message}"
-                    _busy.value = false
-                    return@launch
+            var totalMessages = 0
+            var totalRecords = 0
+            var totalImages = 0
+            var anyImagesQueued = false
+            uris.forEachIndexed { idx, uri ->
+                _status.value = "${Glyph.Ellipsis} parsing export ${idx + 1}/${uris.size}…"
+                val out = runCatching { waImporter.import(uri) }.getOrElse {
+                    _status.value = "× export ${idx + 1}: ${it.message ?: "parse failed"}"
+                    return@forEachIndexed
                 }
-            // If the zip carried images, kick off the throttled vision
-            // ingest as a one-time WorkManager job. Runs in background,
-            // survives lock-screen, paces the vision API at 60s/image.
-            val imageCount = out.imagePaths.size
-            if (imageCount > 0) {
-                imageIngestScheduler.startIngest()
-                _status.value = "${Glyph.Check} learned ${report.recordsWritten} traits from ${report.messagesAnalyzed} messages — rebuilding people profiles + processing $imageCount photos in the background"
-            } else {
-                _status.value = "${Glyph.Check} learned ${report.recordsWritten} traits from ${report.messagesAnalyzed} WhatsApp messages — rebuilding people profiles…"
+                if (!out.ok) {
+                    _status.value = "× export ${idx + 1}: ${out.detail ?: "couldn't parse"}"
+                    return@forEachIndexed
+                }
+                _status.value = "${Glyph.Ellipsis} analysing ${out.messages.size} messages from export ${idx + 1}/${uris.size}…"
+                val report = runCatching { extractor.extractAndPersist("whatsapp", out.messages) }
+                    .getOrElse {
+                        _status.value = "× analysis failed (export ${idx + 1}): ${it.message}"
+                        return@forEachIndexed
+                    }
+                totalMessages += report.messagesAnalyzed
+                totalRecords += report.recordsWritten
+                val imageCount = out.imagePaths.size
+                totalImages += imageCount
+                if (imageCount > 0) {
+                    // Vision ingest scheduler picks up everything in
+                    // the staging dir; calling startIngest() multiple
+                    // times is REPLACE-policy so we trigger it ONCE
+                    // after the loop. But mark that we have images.
+                    anyImagesQueued = true
+                }
             }
-            // Kick the analytics builder so the People screen reflects
-            // the new conversation data immediately, not on the next
-            // daily worker tick.
+            // Vision ingest covers all newly-staged images at once.
+            if (anyImagesQueued) imageIngestScheduler.startIngest()
+
+            val tail = when {
+                uris.size > 1 -> " across ${uris.size} exports"
+                else -> ""
+            }
+            _status.value = "${Glyph.Ellipsis} ingested $totalRecords traits from $totalMessages messages$tail — rebuilding people profiles…"
+            // Kick the analytics builder once at the end of the batch.
+            // Imports are CUMULATIVE — every import adds rows; nothing
+            // is overwritten. Importing the same chat twice will dedupe
+            // at write time on the vault's sha column for identical
+            // content, but slightly-different chunk boundaries will
+            // still produce new rows (acceptable redundancy).
             runCatching { analyticsBuilder.rebuildAll(force = true) }
-            _status.value = "${Glyph.Check} learned ${report.recordsWritten} traits from ${report.messagesAnalyzed} WhatsApp messages · people profiles updated"
+            val imageTail = if (anyImagesQueued) " · processing $totalImages photos in background" else ""
+            _status.value = "${Glyph.Check} ingested $totalRecords traits from $totalMessages messages$tail · people profiles updated$imageTail"
             _busy.value = false
         }
     }
@@ -159,10 +176,14 @@ fun MessageImportPanel(vm: MessageImportPanelViewModel = hiltViewModel()) {
     ) { granted ->
         if (granted) vm.importSms()
     }
+    // OpenMultipleDocuments lets the user pick several exports in
+    // one shot — typical use case is "I've got 5 zips from different
+    // contacts in my Downloads folder, ingest them all". Single
+    // selection still works (returns a single-element list).
     val waFilePicker = rememberLauncherForActivityResult(
-        ActivityResultContracts.OpenDocument(),
-    ) { uri: Uri? ->
-        if (uri != null) vm.importWhatsApp(uri)
+        ActivityResultContracts.OpenMultipleDocuments(),
+    ) { uris: List<Uri> ->
+        if (uris.isNotEmpty()) vm.importWhatsApp(uris)
     }
 
     Column(
@@ -217,7 +238,7 @@ fun MessageImportPanel(vm: MessageImportPanelViewModel = hiltViewModel()) {
                     contentColor = MytharaColors.Fg,
                 ),
             ) {
-                Text("${Glyph.Arrow} import WhatsApp")
+                Text("${Glyph.Arrow} import WhatsApp (multi-OK)")
             }
         }
 
@@ -274,7 +295,7 @@ fun MessageImportPanel(vm: MessageImportPanelViewModel = hiltViewModel()) {
 
         Spacer(Modifier.height(8.dp))
         Text(
-            text = "${Glyph.AccentBar} Mythara reads your messaging history ONCE to learn patterns about you. Text goes through the on-device Gemma model — raw messages NEVER leave your phone. WhatsApp .zip exports also include photos, which Mythara ingests slowly in the background (one image every 60 seconds by default) through your configured vision model (Gemini if set, otherwise MiniMax-VL); only the extracted traits land in Lumi's memory — the raw images are deleted as they're processed. The slow cadence keeps your vision API quota safe. Export chat in WhatsApp: kebab → More → Export chat → 'Without media' for fastest, 'With media' to also learn from photos. The export can be a .txt or .zip.",
+            text = "${Glyph.AccentBar} Mythara reads your messaging history to learn patterns about you AND about each person you talk to. Imports are CUMULATIVE — you can import multiple exports (pick several at once on the file picker), including old backups from other devices, and every import ADDS to memory without overwriting earlier learnings. Text goes through the on-device Gemma model — raw messages NEVER leave your phone. WhatsApp .zip exports also include photos, which Mythara ingests slowly in the background (one image every 60 seconds by default) through your configured vision model (Gemini if set, otherwise MiniMax-VL); only the extracted traits land in Lumi's memory — the raw images are deleted as they're processed. The slow cadence keeps your vision API quota safe. Export chat in WhatsApp: kebab → More → Export chat → 'Without media' for fastest, 'With media' to also learn from photos. Pick one or many .txt / .zip files.",
             color = MytharaColors.FgDim,
             style = MaterialTheme.typography.bodySmall,
         )

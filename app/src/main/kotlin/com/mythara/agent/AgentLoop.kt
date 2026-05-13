@@ -102,6 +102,28 @@ class AgentLoop @Inject constructor(
             ChatMessage(role = "system", content = rendered)
         }
 
+        // Contact-mention injection. If the user's typed/spoken text
+        // names someone Mythara has a profile for ("did Mom mention
+        // her surgery?", "what should I say to Sam?"), splice the
+        // contact's full profile block in as a system message so the
+        // model has summary + Big Five + traits + key points without
+        // having to call tools. Only fires on NORMAL chat turns —
+        // auto-reply / auto-triage turns already build their own
+        // contact profile block, no need to double-inject.
+        val contactProfileSystem: ChatMessage? = if (
+            !userText.startsWith(AutoReplyDispatcher.AUTO_REPLY_PREFIX) &&
+            !userText.startsWith(AutoReplyDispatcher.AUTO_TRIAGE_PREFIX)
+        ) {
+            val mentioned = findMentionedContact(userText)
+            if (mentioned != null) {
+                val block = runCatching { buildContactProfileBlock(mentioned) }.getOrDefault("")
+                if (block.isNotBlank()) {
+                    android.util.Log.d(TAG, "injecting profile for mentioned contact: $mentioned")
+                    ChatMessage(role = "system", content = "When the user mentions $mentioned, draw on this context:$block")
+                } else null
+            } else null
+        } else null
+
         // Two mood signals:
         //   1. currentMood — the freshest detected emotion from the
         //      just-spoken / just-typed user input. Lives in a vault
@@ -459,6 +481,7 @@ class AgentLoop @Inject constructor(
                 if (autoReplySystem != null) add(autoReplySystem)
                 if (autoTriageSystem != null) add(autoTriageSystem)
                 if (notifSystem != null) add(notifSystem)
+                if (contactProfileSystem != null) add(contactProfileSystem)
                 if (recallSystem != null) add(recallSystem)
                 addAll(historyMessages)
             }
@@ -994,6 +1017,46 @@ class AgentLoop @Inject constructor(
     }
 
     private fun fmt(v: Double?): String = if (v == null) "?" else "%.2f".format(v)
+
+    /**
+     * Scan the user's typed/spoken text for any contact name we have
+     * a profile for. Returns the canonical display name of the best
+     * match (longest token match wins so "Sam Chen" beats "Sam" when
+     * both exist).
+     *
+     * Pulls names from [contactProfiles]; this catches both the
+     * curated favorites AND anyone who's appeared in vault data
+     * (incoming notifications, imported history). Case-insensitive,
+     * word-boundary matched so a stray substring like "moment"
+     * doesn't trip a "Mo" contact match.
+     */
+    private suspend fun findMentionedContact(userText: String): String? {
+        if (userText.isBlank()) return null
+        val profiles = runCatching { contactProfiles.dao.listAll() }.getOrDefault(emptyList())
+        if (profiles.isEmpty()) return null
+        val lower = userText.lowercase()
+        var best: String? = null
+        var bestLen = 0
+        for (p in profiles) {
+            val name = p.displayName.trim()
+            if (name.isBlank()) continue
+            val needle = name.lowercase()
+            // word-boundary match — needle must be surrounded by
+            // non-letter chars (or string boundaries) so "Mo" inside
+            // "moment" doesn't match.
+            val idx = lower.indexOf(needle)
+            if (idx < 0) continue
+            val before = if (idx == 0) ' ' else lower[idx - 1]
+            val afterIdx = idx + needle.length
+            val after = if (afterIdx >= lower.length) ' ' else lower[afterIdx]
+            if (before.isLetterOrDigit() || after.isLetterOrDigit()) continue
+            if (needle.length > bestLen) {
+                best = p.displayName
+                bestLen = needle.length
+            }
+        }
+        return best
+    }
 
     private fun parseJsonStringList(s: String?): List<String> {
         if (s.isNullOrBlank()) return emptyList()
