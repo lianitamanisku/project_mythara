@@ -6,6 +6,8 @@ import androidx.work.Configuration
 import com.mythara.agent.SelfOrganizerScheduler
 import com.mythara.growth.GrowthScheduler
 import com.mythara.memory.MemorySyncScheduler
+import com.mythara.persona.PersonaScheduler
+import com.mythara.persona.PersonaSettings
 import com.mythara.voice.QuickTalkNotification
 import com.mythara.voice.QuickTalkSettings
 import dagger.hilt.android.HiltAndroidApp
@@ -34,6 +36,8 @@ class MytharaApp : Application(), Configuration.Provider {
     @Inject lateinit var selfOrganizerScheduler: SelfOrganizerScheduler
     @Inject lateinit var quickTalkNotification: QuickTalkNotification
     @Inject lateinit var quickTalkSettings: QuickTalkSettings
+    @Inject lateinit var personaScheduler: PersonaScheduler
+    @Inject lateinit var personaSettings: PersonaSettings
 
     // App-scoped supervisor for fire-and-forget process-level
     // coroutines (settings-flow observers etc.). Cancelled implicitly
@@ -60,6 +64,15 @@ class MytharaApp : Application(), Configuration.Provider {
             quickTalkSettings.enabledFlow().collect { enabled ->
                 if (enabled) quickTalkNotification.show()
                 else quickTalkNotification.cancel()
+            }
+        }
+        // Mirror the persona-collection toggle. start() is idempotent
+        // (UPDATE policy on the unique periodic work); stop() cancels
+        // any pending run.
+        appScope.launch {
+            personaSettings.enabledFlow().collect { enabled ->
+                if (enabled) personaScheduler.start()
+                else personaScheduler.stop()
             }
         }
     }

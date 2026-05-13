@@ -23,6 +23,16 @@
     <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES"
         tools:ignore="QueryAllPackagesPermission" />
 
+    <!-- Usage stats — what apps the user has been in, for how long,
+         when. Required by the persona-building pipeline that watches
+         user behaviour and writes traits into Lumi's memory. Special
+         permission, NOT granted via runtime prompt; the user has to
+         flip Mythara on in Settings → Apps → Special app access →
+         Usage access. Off by default and gated behind an explicit
+         Settings toggle inside Mythara on top of that. -->
+    <uses-permission android:name="android.permission.PACKAGE_USAGE_STATS"
+        tools:ignore="ProtectedPermissions" />
+
     <!-- Camera + mic hardware optional (Mythara still useful without them on devices that lack one) -->
     <uses-feature android:name="android.hardware.camera" android:required="false" />
     <uses-feature android:name="android.hardware.microphone" android:required="false" />
