@@ -35,7 +35,10 @@ import javax.inject.Singleton
  * mirror is currently authoritative — no other code change needed.
  */
 @Singleton
-class GemmaModelStore @Inject constructor(@ApplicationContext private val ctx: Context) {
+class GemmaModelStore @Inject constructor(
+    @ApplicationContext private val ctx: Context,
+    private val hfTokenStore: HuggingFaceTokenStore,
+) {
 
     sealed interface State {
         data object Missing : State
@@ -79,15 +82,22 @@ class GemmaModelStore @Inject constructor(@ApplicationContext private val ctx: C
             return _state.value
         }
         return withContext(Dispatchers.IO) {
-            runCatching {
+            val attempt = runCatching {
                 download()
-                State.Ready(modelFile.absolutePath).also { _state.value = it }
-            }.getOrElse { e ->
+                State.Ready(modelFile.absolutePath)
+            }
+            attempt.getOrElse { e ->
                 Log.e(TAG, "Gemma fetch failed: ${e.message}", e)
                 runCatching { if (modelFile.exists()) modelFile.delete() }
                 runCatching { if (sizeMarker.exists()) sizeMarker.delete() }
-                State.Failed(e.message ?: e.javaClass.simpleName).also { _state.value = it }
-            }
+                val msg = e.message ?: e.javaClass.simpleName
+                // Soften the 401 message with a hint about the token path —
+                // most failures with HF-hosted Gemma will land here.
+                val friendlier = if (msg.contains("401")) {
+                    "$msg — add an HF token in the panel below, or import a .task manually."
+                } else msg
+                State.Failed(friendlier)
+            }.also { _state.value = it }
         }
     }
 
@@ -162,14 +172,23 @@ class GemmaModelStore @Inject constructor(@ApplicationContext private val ctx: C
         }
     }
 
-    private fun download() {
+    private suspend fun download() {
         if (modelFile.exists()) modelFile.delete()
         if (sizeMarker.exists()) sizeMarker.delete()
 
-        val req = Request.Builder()
+        // Pick up the user's HF token at request time so a freshly-saved
+        // token is honoured without restarting the app. Token is never
+        // logged; OkHttp's logger redacts the Authorization header per
+        // GitHubClient's pattern, but we use a fresh client here without
+        // logging anyway.
+        val token = hfTokenStore.token()
+        val reqBuilder = Request.Builder()
             .url(MODEL_URL)
             .header("User-Agent", "Mythara/0.0.1 (Android)")
-            .build()
+        if (!token.isNullOrBlank()) {
+            reqBuilder.header("Authorization", "Bearer $token")
+        }
+        val req = reqBuilder.build()
         http.newCall(req).execute().use { resp ->
             if (!resp.isSuccessful) error("HTTP ${resp.code} fetching Gemma model")
             val body = resp.body ?: error("empty body fetching Gemma model")

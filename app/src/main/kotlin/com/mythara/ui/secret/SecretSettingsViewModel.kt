@@ -15,6 +15,7 @@ import com.mythara.secret.observe.ObserveStore
 import com.mythara.secret.observe.embed.EmbeddingsModelStore
 import com.mythara.secret.observe.extract.gemma.GemmaExtractor
 import com.mythara.secret.observe.extract.gemma.GemmaModelStore
+import com.mythara.secret.observe.extract.gemma.HuggingFaceTokenStore
 import com.mythara.secret.observe.vault.LearningEntity
 import com.mythara.secret.observe.vault.LearningVault
 import com.mythara.secret.observe.vosk.Language
@@ -42,6 +43,7 @@ class SecretSettingsViewModel @Inject constructor(
     private val embedModel: EmbeddingsModelStore,
     private val gemmaModel: GemmaModelStore,
     private val gemmaExtractor: GemmaExtractor,
+    private val hfToken: HuggingFaceTokenStore,
     private val session: ObserveSession,
     private val secretAuth: SecretAuthStore,
     private val vault: LearningVault,
@@ -57,6 +59,9 @@ class SecretSettingsViewModel @Inject constructor(
         val modelState: VoskModelStore.State = VoskModelStore.State.Missing,
         val embedModelState: EmbeddingsModelStore.State = EmbeddingsModelStore.State.Missing,
         val gemmaModelState: GemmaModelStore.State = GemmaModelStore.State.Missing,
+        /** True when a HuggingFace access token has been saved (its value
+         *  itself is never exposed to the UI). */
+        val hfTokenSaved: Boolean = false,
         val transcriptCount: Int = 0,
         val recentTranscripts: List<TranscriptPreview> = emptyList(),
         /** True when the user has opted into biometric unlock for Secret mode. */
@@ -106,6 +111,11 @@ class SecretSettingsViewModel @Inject constructor(
         viewModelScope.launch {
             gemmaModel.state.collect { gms ->
                 _state.update { it.copy(gemmaModelState = gms) }
+            }
+        }
+        viewModelScope.launch {
+            hfToken.tokenFlow().collect { t ->
+                _state.update { it.copy(hfTokenSaved = !t.isNullOrBlank()) }
             }
         }
         viewModelScope.launch {
@@ -195,6 +205,15 @@ class SecretSettingsViewModel @Inject constructor(
             gemmaExtractor.release()
             gemmaModel.forgetModel()
         }
+    }
+
+    fun saveHfToken(plain: String) {
+        if (plain.isBlank()) return
+        viewModelScope.launch { hfToken.setToken(plain) }
+    }
+
+    fun clearHfToken() {
+        viewModelScope.launch { hfToken.clear() }
     }
 
     fun forgetVoskModel() {
