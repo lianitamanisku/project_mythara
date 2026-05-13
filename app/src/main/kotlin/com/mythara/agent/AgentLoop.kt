@@ -305,7 +305,8 @@ class AgentLoop @Inject constructor(
                             "  3. If something specific would genuinely help the reply (calendar to answer 'are you free Sunday?', location to answer 'where are you?'), call the relevant READ tool now (list_calendar_events / get_location / read_contact). Reads are always allowed.\n" +
                             "  4. Compose ONE short reply in the user's voice. Match the tone you saw in the screenshot_view description. If an image was in it, reference what's IN it naturally ('cute dog!', 'that view is something else') — not 'I see you sent a photo'.\n" +
                             "  5. $toolHint Call the send tool. Do NOT preview the message to the user — they trust this contact for auto-reply.\n" +
-                            "  6. After the send tool returns, your final spoken reply is a 3-5 word confirmation ('replied to ${parsed.contact}.', 'sent.', 'done.') — that's what the user hears via TTS. Don't repeat what you sent.\n\n" +
+                            "  6. After the send tool returns, your final spoken reply is a 3-5 word confirmation ('replied to ${parsed.contact}.', 'sent.', 'done.') — that's what the user hears via TTS. Don't repeat what you sent.\n" +
+                            "  7. DO NOT call open_app('com.mythara') or any other tool to bring Mythara back. Returning to Mythara at the end of an auto-reply turn is HANDLED AUTOMATICALLY by the runtime — wasting a tool call here just adds latency. Just emit your confirmation and stop.\n\n" +
                             "If the incoming message looks like spam / promotional / not from the real person (e.g. 'Click here to claim your prize'), DO NOT auto-reply. Output the single token NOSURFACE and call no tools.",
                 )
             } else null
@@ -361,7 +362,8 @@ class AgentLoop @Inject constructor(
                             "  3. Keep it short — 1 sentence usually, 2 at most. Auto-replies are not monologues.\n" +
                             "  4. If a read tool would genuinely help (calendar / location / contact lookup), call it. Reads are always safe.\n" +
                             "  5. $toolHint Call exactly one direct-send tool. Don't preview the message to the user. If an image was visible, react to what's IN it ('cute pup!', 'great shot') — not 'I see you sent a photo'.\n" +
-                            "  6. After the tool returns, emit a 3-5 word confirmation only (\"replied.\", \"sent.\").\n\n" +
+                            "  6. After the tool returns, emit a 3-5 word confirmation only (\"replied.\", \"sent.\").\n" +
+                            "  7. DO NOT call open_app('com.mythara') yourself. Returning to Mythara at the end of a triage turn is HANDLED AUTOMATICALLY by the runtime. Just emit the confirmation and stop.\n\n" +
                             "CRITICAL ISOLATION RULES — same as favorite auto-reply:\n" +
                             "  • You are talking to ${parsed.sender} and ONLY ${parsed.sender}. Do not reference anything from conversations with anyone else.\n" +
                             "  • Do not share the user's location / schedule / health / private details unless they're directly relevant AND a normal friend would naturally share them in this exchange.\n" +
@@ -501,7 +503,15 @@ class AgentLoop @Inject constructor(
             // implementations also return `tool_calls`. Treat both as the signal
             // that the next iteration should execute tools + resume.
             val toolFinish = finishReason == "tool_calls" || finishReason == "tool_use"
+            // Auto-reply turns may have left the user on WhatsApp / Messages
+            // mid-screenshot; we always want to land them back on Mythara
+            // before the turn ends. The flag is also used below to mark
+            // tool-execution context with the AutoReplyMarker for prefix
+            // injection. Same condition either way — hoist it once.
+            val isAutoReplyTurn = userText.startsWith(AutoReplyDispatcher.AUTO_REPLY_PREFIX) ||
+                userText.startsWith(AutoReplyDispatcher.AUTO_TRIAGE_PREFIX)
             if (toolCalls.isEmpty() || !toolFinish) {
+                if (isAutoReplyTurn) returnToMythara()
                 emit(Turn.Finished(lastAssistantText, iterations = iter, userMoodTrend = effectiveMood))
                 return@flow
             }
@@ -512,8 +522,6 @@ class AgentLoop @Inject constructor(
             // any tool that wants the user's verbatim words (e.g.
             // take_photo's vision pass) can read it from the coroutine
             // context without the agent loop knowing tool-specific details.
-            val isAutoReplyTurn = userText.startsWith(AutoReplyDispatcher.AUTO_REPLY_PREFIX) ||
-                userText.startsWith(AutoReplyDispatcher.AUTO_TRIAGE_PREFIX)
             for (call in toolCalls) {
                 emit(Turn.ToolStart(call.id, call.function.name, call.function.arguments))
                 val t0 = System.nanoTime()
@@ -544,7 +552,28 @@ class AgentLoop @Inject constructor(
 
         // Hit the iteration cap. Surface a soft-stop so the user sees a
         // bounded conversation instead of an infinite-loop bill.
+        if (userText.startsWith(AutoReplyDispatcher.AUTO_REPLY_PREFIX) ||
+            userText.startsWith(AutoReplyDispatcher.AUTO_TRIAGE_PREFIX)
+        ) returnToMythara()
         emit(Turn.Finished(lastAssistantText + " [hit max iterations]", iterations = iter, userMoodTrend = effectiveMood))
+    }
+
+    /**
+     * Best-effort "bring Mythara back to foreground" call invoked at
+     * the end of every auto-reply / auto-triage turn. The agent may
+     * have opened WhatsApp / Messages for screen reading; without
+     * this the user is left staring at the other app after the
+     * autopilot action completes. send_whatsapp_direct already calls
+     * this internally on success — calling it again is a harmless
+     * no-op (the system reuses the existing task at the top).
+     *
+     * Skipped silently when accessibility isn't granted: the user
+     * just stays where they are. No crash, no error to the model.
+     */
+    private fun returnToMythara() {
+        runCatching {
+            com.mythara.services.PhoneControlAccessibilityService.instance?.bringMytharaToFront()
+        }
     }
 
     /**
