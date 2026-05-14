@@ -97,5 +97,81 @@ object KnownMcpServers {
             description = "Incidents + escalations. Requires PagerDuty API key.",
             needsToken = true,
         ),
+
+        // ----- Mobile-relevant additions -----
+        // These are the MCPs most useful from a phone where Lumi
+        // already has the device-side tools (camera, location, SMS,
+        // contacts) but lacks a web-shaped escape hatch for "what's
+        // the weather", "translate this", "look up this fact". All
+        // need a free-tier user-supplied token — there's no
+        // production-grade no-auth web-search MCP today (operators
+        // pay per query, so they don't give them away anonymously).
+
+        KnownMcpServer(
+            name = "Brave Search",
+            url = "https://api.search.brave.com/mcp",
+            description = "Web + image + news search. Free tier ~2000 queries/month. Token from search.brave.com/app.",
+            needsToken = true,
+        ),
+        KnownMcpServer(
+            name = "Tavily Search",
+            url = "https://mcp.tavily.com/mcp",
+            description = "AI-optimised web search with extracted answers. Free tier 1000/month. Token from tavily.com.",
+            needsToken = true,
+        ),
+        KnownMcpServer(
+            name = "Hugging Face",
+            url = "https://hf.co/mcp",
+            description = "Model inference, dataset queries, search. Free tier on hosted models. Token from huggingface.co/settings/tokens.",
+            needsToken = true,
+        ),
+        KnownMcpServer(
+            name = "DeepL Translate",
+            url = "https://api-free.deepl.com/mcp",
+            description = "Translation across 30+ languages. Free tier 500k chars/month. Token from deepl.com/pro-api.",
+            needsToken = true,
+        ),
+        KnownMcpServer(
+            name = "OpenWeatherMap",
+            url = "https://api.openweathermap.org/mcp",
+            description = "Current conditions, forecast, alerts. Free tier 1000 calls/day. Token from openweathermap.org/api.",
+            needsToken = true,
+        ),
+        KnownMcpServer(
+            name = "Mapbox Directions",
+            url = "https://api.mapbox.com/mcp",
+            description = "Driving / walking / transit directions. Free tier 100k requests/month. Token from mapbox.com/access-tokens.",
+            needsToken = true,
+        ),
+        KnownMcpServer(
+            name = "Stripe",
+            url = "https://mcp.stripe.com/mcp",
+            description = "Payments, customers, invoices on your own Stripe account. Requires Stripe restricted key.",
+            needsToken = true,
+        ),
+        KnownMcpServer(
+            name = "Sentry",
+            url = "https://mcp.sentry.dev/mcp",
+            description = "Error tracking — recent issues, releases, performance. Requires Sentry auth token.",
+            needsToken = true,
+        ),
+        KnownMcpServer(
+            name = "Plaid (banking)",
+            url = "https://production.plaid.com/mcp",
+            description = "Read your own bank accounts + transactions via Plaid. Requires Plaid client_id + secret bundle as bearer.",
+            needsToken = true,
+        ),
+        KnownMcpServer(
+            name = "Apollo.io (sales)",
+            url = "https://api.apollo.io/mcp",
+            description = "Contact + company enrichment. Free tier 100 credits/month. Token from apollo.io/settings.",
+            needsToken = true,
+        ),
+        KnownMcpServer(
+            name = "Anthropic Hosted Tools",
+            url = "https://api.anthropic.com/v1/mcp",
+            description = "Anthropic's hosted utility MCPs (code execution, web search). Requires Anthropic API key.",
+            needsToken = true,
+        ),
     )
 }
