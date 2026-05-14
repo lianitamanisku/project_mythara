@@ -21,6 +21,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import com.mythara.ui.dashboard.tiles.AppDockTile
 import com.mythara.ui.dashboard.tiles.DevicesTile
 import com.mythara.ui.dashboard.tiles.HealthTile
 import com.mythara.ui.dashboard.tiles.HrCorrelationTile
@@ -49,6 +50,7 @@ fun DashboardHome(
     onOpenHealth: () -> Unit,
     onOpenSensors: () -> Unit,
     onOpenSkills: () -> Unit,
+    onOpenAppDrawer: () -> Unit,
 ) {
     Column(
         modifier = Modifier
@@ -106,6 +108,15 @@ fun DashboardHome(
             item(span = { GridItemSpan(maxLineSpan) }) {
                 Box(modifier = Modifier.fillMaxWidth().height(96.dp)) {
                     SkillsTile(onExpand = onOpenSkills)
+                }
+            }
+            // App dock — bottom strip of installed-app icons that
+            // makes the tablet dashboard feel like a real launcher
+            // home. Tap an icon → app launches directly. Tap the
+            // tile's expand chevron → full app drawer with search.
+            item(span = { GridItemSpan(maxLineSpan) }) {
+                Box(modifier = Modifier.fillMaxWidth().height(110.dp)) {
+                    AppDockTile(onExpand = onOpenAppDrawer)
                 }
             }
         }

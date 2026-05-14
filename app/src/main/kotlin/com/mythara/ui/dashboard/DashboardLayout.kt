@@ -95,6 +95,7 @@ fun DashboardLayout(
                         onOpenHealth = { navTo(rightNav, RightPaneRoutes.Settings) },
                         onOpenSensors = { navTo(rightNav, RightPaneRoutes.Settings) },
                         onOpenSkills = { navTo(rightNav, RightPaneRoutes.Settings) },
+                        onOpenAppDrawer = { navTo(rightNav, RightPaneRoutes.AppDrawer) },
                     )
                 }
                 composable(RightPaneRoutes.Settings) {

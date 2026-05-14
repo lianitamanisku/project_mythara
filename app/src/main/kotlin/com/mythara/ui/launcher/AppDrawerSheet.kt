@@ -251,7 +251,7 @@ private fun DrawerCell(app: DrawerApp, onClick: () -> Unit) {
  * launchers, e.g. Outlook Personal vs Outlook Work) should appear
  * twice so the user can pick the right one.
  */
-private fun loadDrawerApps(ctx: Context): List<DrawerApp> {
+internal fun loadDrawerApps(ctx: Context): List<DrawerApp> {
     val pm = ctx.packageManager
     val intent = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
     val infos = pm.queryIntentActivities(intent, 0)
@@ -277,7 +277,7 @@ private fun loadDrawerApps(ctx: Context): List<DrawerApp> {
     return deduped.sortedBy { it.label.lowercase() }
 }
 
-private fun launchApp(ctx: Context, pkg: String) {
+internal fun launchApp(ctx: Context, pkg: String) {
     val intent = ctx.packageManager.getLaunchIntentForPackage(pkg)
     if (intent == null) {
         Log.w(TAG, "no launcher intent for $pkg — skipping")
