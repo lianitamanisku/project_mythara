@@ -59,6 +59,7 @@ class SelfOrganizerWorker @AssistedInject constructor(
     private val journal: LearningJournal,
     private val episodic: EpisodicPromoter,
     private val decayer: StaleDecayer,
+    private val daySummaryBuilder: com.mythara.lifeline.DaySummaryBuilder,
 ) : CoroutineWorker(ctx, params) {
 
     override suspend fun doWork(): Result {
@@ -97,6 +98,15 @@ class SelfOrganizerWorker @AssistedInject constructor(
                 "deleted=${decayReport.recordsDeleted}",
         )
 
+        // Step 4: day-summary cards — digest the last few completed days
+        // into the timeline's life-log cards (interactions + memories +
+        // learnings + photos). Self-gates per day, so this is cheap.
+        val daySummaries = runCatching { daySummaryBuilder.buildRecent(daysBack = 4) }.getOrElse { e ->
+            Log.w(TAG, "day-summary build threw ${e.message}", e)
+            0
+        }
+        Log.d(TAG, "day-summaries: built=$daySummaries")
+
         // Journal: combined summary so the growth log shows what happened.
         val notes = buildList {
             if (dedupReport.groupsConsolidated > 0) {
@@ -107,6 +117,9 @@ class SelfOrganizerWorker @AssistedInject constructor(
             }
             if (decayReport.confidenceDecayed > 0 || decayReport.recordsDeleted > 0) {
                 add("decayed ${decayReport.confidenceDecayed} stale fact(s), deleted ${decayReport.recordsDeleted}")
+            }
+            if (daySummaries > 0) {
+                add("built $daySummaries day-summary card(s)")
             }
         }
         if (notes.isNotEmpty()) {

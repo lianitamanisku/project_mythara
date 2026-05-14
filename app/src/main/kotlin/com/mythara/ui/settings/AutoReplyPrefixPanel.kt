@@ -2,9 +2,7 @@ package com.mythara.ui.settings
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -23,7 +21,6 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.unit.dp
@@ -62,9 +59,7 @@ class AutoReplyPrefixViewModel @Inject constructor(
  * "LUMI (autopilot): I'll be there at 5".
  *
  * Saves on each keystroke (DataStore preferences write is cheap)
- * so the user doesn't have to remember to tap a save button. Live
- * preview underneath shows what the next outgoing message will
- * look like with the current prefix applied to a placeholder body.
+ * so the user doesn't have to remember to tap a save button.
  */
 @Composable
 fun AutoReplyPrefixPanel(vm: AutoReplyPrefixViewModel = hiltViewModel()) {
@@ -111,32 +106,10 @@ fun AutoReplyPrefixPanel(vm: AutoReplyPrefixViewModel = hiltViewModel()) {
             modifier = Modifier.fillMaxWidth(),
         )
 
-        // Live preview — only when a non-blank prefix is set. Shows
-        // the user exactly what the prepended message will look like.
+        // Clear button — only when a non-blank prefix is set. Tapping
+        // it empties the prefix so messages send with no prepend.
         if (input.isNotBlank()) {
             Spacer(Modifier.height(10.dp))
-            Text(
-                text = "${Glyph.Arrow} preview",
-                color = MytharaColors.FgMute,
-                style = MaterialTheme.typography.bodySmall,
-            )
-            Spacer(Modifier.height(4.dp))
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(6.dp))
-                    .background(MytharaColors.Bg)
-                    .padding(horizontal = 10.dp, vertical = 8.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween,
-            ) {
-                Text(
-                    text = "${input}I'll be there at 5",
-                    color = MytharaColors.Fg,
-                    style = MaterialTheme.typography.bodySmall,
-                )
-            }
-            Spacer(Modifier.height(8.dp))
             Button(
                 onClick = {
                     input = ""

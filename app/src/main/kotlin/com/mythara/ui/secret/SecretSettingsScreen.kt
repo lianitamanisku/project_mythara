@@ -62,6 +62,9 @@ import com.mythara.ui.theme.MytharaColors
 @Composable
 fun SecretSettingsScreen(
     onBack: () -> Unit,
+    /** Opens the Notes capture surface. Null hides the entry (e.g. on
+     *  layouts that don't yet route it). */
+    onOpenNotes: (() -> Unit)? = null,
     vm: SecretSettingsViewModel = hiltViewModel(),
 ) {
     val state by vm.state.collectAsState()
@@ -120,6 +123,25 @@ fun SecretSettingsScreen(
                     text = state.observeState.displayLabel,
                     color = MytharaColors.Fg, style = MaterialTheme.typography.bodyMedium,
                 )
+            }
+        }
+
+        if (onOpenNotes != null) {
+            Spacer(Modifier.height(14.dp))
+            Panel("notes") {
+                Text(
+                    text = "Capture any copied or typed text — file it as a general memory Lumi recalls, " +
+                        "a note about a specific person (feeds their relationship analysis), or a quick jotting.",
+                    color = MytharaColors.FgDim,
+                    style = MaterialTheme.typography.bodySmall,
+                )
+                Spacer(Modifier.height(10.dp))
+                Button(
+                    onClick = onOpenNotes,
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = MytharaColors.Charple, contentColor = MytharaColors.Fg,
+                    ),
+                ) { Text("${Glyph.DiamondFilled} open notes") }
             }
         }
 

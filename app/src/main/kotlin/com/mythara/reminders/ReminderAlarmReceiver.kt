@@ -77,9 +77,28 @@ class ReminderAlarmReceiver : BroadcastReceiver() {
         // vs now).
         announcer.announce(task)
         postNotification(ctx, taskId, task.title, task.body)
-        // Mark RUNNING so the chat card shows "now firing". Status
-        // resolves to DONE / SNOOZED based on user action.
-        runCatching { taskRepo.dao.markRunning(taskId) }
+
+        val recurrence = Recurrence.parse(task.recurrence)
+        if (recurrence != null) {
+            // Recurring — re-arm for the next occurrence instead of
+            // going terminal. The ReminderAlarmScheduler observer picks
+            // up the rewritten row and registers a fresh exact alarm.
+            val next = recurrence.nextAfter(System.currentTimeMillis())
+            runCatching {
+                taskRepo.dao.upsert(
+                    task.copy(
+                        status = TaskStatus.PENDING.name,
+                        scheduledForMs = next,
+                        syncedAtMs = null,
+                    ),
+                )
+            }
+            Log.d(TAG, "$taskId recurring (${task.recurrence}) → re-armed for ${java.util.Date(next)}")
+        } else {
+            // One-shot — mark RUNNING so the chat card shows "now
+            // firing". Status resolves to DONE / SNOOZED on user action.
+            runCatching { taskRepo.dao.markRunning(taskId) }
+        }
     }
 
     private suspend fun handleUserAction(ctx: Context, taskId: String, kind: String) {
@@ -87,9 +106,17 @@ class ReminderAlarmReceiver : BroadcastReceiver() {
         val task = taskRepo.dao.byId(taskId) ?: return
         when (kind) {
             "done" -> {
-                taskRepo.dao.markTerminal(taskId, TaskStatus.DONE.name, "user marked done", now)
-                cancelNotif(ctx, taskId)
-                Log.d(TAG, "$taskId marked done by user")
+                if (Recurrence.parse(task.recurrence) != null) {
+                    // Recurring — "Done" just dismisses THIS occurrence's
+                    // notification. handleFire already re-armed the row
+                    // for the next fire, so the series continues.
+                    cancelNotif(ctx, taskId)
+                    Log.d(TAG, "$taskId recurring occurrence dismissed; series continues")
+                } else {
+                    taskRepo.dao.markTerminal(taskId, TaskStatus.DONE.name, "user marked done", now)
+                    cancelNotif(ctx, taskId)
+                    Log.d(TAG, "$taskId marked done by user")
+                }
             }
             "snooze_15m", "snooze_1h", "snooze_3h" -> {
                 val delta = when (kind) {
@@ -129,9 +156,10 @@ class ReminderAlarmReceiver : BroadcastReceiver() {
         )
         val notif = NotificationCompat.Builder(ctx, CHANNEL_ID)
             .setSmallIcon(R.mipmap.ic_launcher)
+            .setSubText("Lumi reminder")
             .setContentTitle("⟳ $title")
-            .setContentText(body.ifBlank { "Reminder from Mythara" })
-            .setStyle(NotificationCompat.BigTextStyle().bigText(body))
+            .setContentText(body.ifBlank { "Reminder from Lumi" })
+            .setStyle(NotificationCompat.BigTextStyle().bigText(body.ifBlank { title }))
             .setContentIntent(openApp)
             .setAutoCancel(false)
             .setCategory(NotificationCompat.CATEGORY_REMINDER)

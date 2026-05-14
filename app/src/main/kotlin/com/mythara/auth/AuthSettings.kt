@@ -3,6 +3,7 @@ package com.mythara.auth
 import android.content.Context
 import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.Preferences
+import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
@@ -39,6 +40,7 @@ class AuthSettings @Inject constructor(
         by preferencesDataStore(name = "mythara_auth")
 
     private val keyTimeoutMs = longPreferencesKey("auto_lock_timeout_ms")
+    private val keyLockEnabled = booleanPreferencesKey("lock_enabled")
 
     fun timeoutFlow(): Flow<Long> = ctx.dataStore.data.map { it[keyTimeoutMs] ?: DEFAULT_TIMEOUT_MS }
 
@@ -47,6 +49,18 @@ class AuthSettings @Inject constructor(
 
     suspend fun setTimeoutMs(ms: Long) {
         ctx.dataStore.edit { it[keyTimeoutMs] = ms }
+    }
+
+    /**
+     * Master switch for the biometric lock. When false, the app skips
+     * the AuthGate entirely — including on cold start. Default true.
+     */
+    fun lockEnabledFlow(): Flow<Boolean> = ctx.dataStore.data.map { it[keyLockEnabled] ?: true }
+
+    suspend fun isLockEnabled(): Boolean = ctx.dataStore.data.first()[keyLockEnabled] ?: true
+
+    suspend fun setLockEnabled(value: Boolean) {
+        ctx.dataStore.edit { it[keyLockEnabled] = value }
     }
 
     companion object {

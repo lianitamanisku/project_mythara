@@ -12,6 +12,8 @@ import androidx.room.PrimaryKey
 import androidx.room.Query
 import androidx.room.Room
 import androidx.room.RoomDatabase
+import androidx.room.migration.Migration
+import androidx.sqlite.db.SupportSQLiteDatabase
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.flow.Flow
 import javax.inject.Inject
@@ -65,6 +67,13 @@ data class TaskEntity(
     @ColumnInfo(name = "result_text") val resultText: String? = null,
     /** Optional schedule (epoch ms). Null = run-asap. */
     @ColumnInfo(name = "scheduled_for_ms") val scheduledForMs: Long? = null,
+    /**
+     * Optional recurrence spec ([com.mythara.reminders.Recurrence]
+     * encoded form, e.g. "DAILY:09:00"). Null = one-shot. When set,
+     * the reminder receiver re-arms [scheduledForMs] to the next
+     * occurrence each time it fires instead of going terminal.
+     */
+    @ColumnInfo(name = "recurrence") val recurrence: String? = null,
     /**
      * Local marker — true if we've already shipped this row's
      * latest state to the memory repo on a previous sync. Cleared
@@ -194,15 +203,22 @@ interface TaskDao {
     ): Flow<Int>
 }
 
-@Database(entities = [TaskEntity::class], version = 1, exportSchema = false)
+@Database(entities = [TaskEntity::class], version = 2, exportSchema = false)
 abstract class TaskDb : RoomDatabase() {
     abstract fun dao(): TaskDao
+}
+
+/** v1 → v2: adds the nullable `recurrence` column for repeating tasks. */
+internal val MIGRATION_TASKS_1_2 = object : Migration(1, 2) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL("ALTER TABLE tasks ADD COLUMN recurrence TEXT")
+    }
 }
 
 @Singleton
 class TaskRepository @Inject constructor(@ApplicationContext ctx: Context) {
     private val db: TaskDb = Room.databaseBuilder(
         ctx, TaskDb::class.java, "mythara_tasks.db",
-    ).build()
+    ).addMigrations(MIGRATION_TASKS_1_2).build()
     val dao: TaskDao = db.dao()
 }

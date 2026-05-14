@@ -48,6 +48,7 @@ class ChatViewModel @Inject constructor(
     private val deviceIdStore: com.mythara.memory.DeviceIdStore,
     private val lifelineRepo: com.mythara.lifeline.LifelineRepository,
     private val taskRepo: com.mythara.tasks.TaskRepository,
+    private val auditRepo: com.mythara.audit.AuditRepository,
 ) : ViewModel() {
     /** Local device id, cached once on init. Used to identify
      *  foreign-device chat rows for the FromOtherDevice card render. */
@@ -249,10 +250,31 @@ class ChatViewModel @Inject constructor(
      * these instead of raw MessageRow entries because tool calls + their
      * results are paired visually — a single composite block, Crush-style.
      */
+    /**
+     * Visual classification for plain text bubbles, so the chat
+     * color-codes by WHERE the text came from:
+     *  - [User]         — a message the user typed / spoke
+     *  - [Notification] — an app notification routed into the agent
+     *                     (the `[notif]` turns); muted, Mustard-framed
+     *  - [Reply]        — the agent answering a real user message
+     *  - [Update]       — the agent reacting to a notification
+     *                     (auto-triage output); Malibu-framed
+     */
+    enum class TextKind { User, Notification, Reply, Update }
+
     sealed interface ChatItem {
         val key: String
-        data class UserText(override val key: String, val text: String) : ChatItem
-        data class AssistantText(override val key: String, val text: String, val streaming: Boolean = false) : ChatItem
+        data class UserText(
+            override val key: String,
+            val text: String,
+            val kind: TextKind = TextKind.User,
+        ) : ChatItem
+        data class AssistantText(
+            override val key: String,
+            val text: String,
+            val streaming: Boolean = false,
+            val kind: TextKind = TextKind.Reply,
+        ) : ChatItem
         /**
          * A chat message that originated on a DIFFERENT device and
          * landed locally via memory-sync restore. Rendered as a
@@ -323,6 +345,20 @@ class ChatViewModel @Inject constructor(
             val deviceShortId: String,
             val placeLabel: String? = null,
         ) : ChatItem
+
+        /**
+         * A logged interaction with a contact — a call, message, or
+         * WhatsApp Lumi sent, or a contact lookup. Interleaved into the
+         * timeline by the interaction's timestamp, like photos and
+         * reminders, so the scrollback shows who was contacted when.
+         */
+        data class PersonInteraction(
+            override val key: String,
+            val contactName: String,
+            val action: String,
+            val tsMillis: Long,
+            val ok: Boolean,
+        ) : ChatItem
     }
 
     enum class ToolState { Running, Success, Failure }
@@ -372,11 +408,10 @@ class ChatViewModel @Inject constructor(
                 history.dao.observeAll(),
                 lifelineRepo.dao.observeRecent(),
                 taskRepo.dao.observeRecent(),
-            ) { rows, lifeline, tasks ->
-                Triple(rows, lifeline, tasks)
-            }.collect { (rows, lifeline, tasks) ->
-                rebuildItems(rows, lifeline, tasks)
-            }
+                auditRepo.dao.observeRecent(),
+            ) { rows, lifeline, tasks, audit ->
+                rebuildItems(rows, lifeline, tasks, audit)
+            }.collect { }
         }
     }
 
@@ -504,11 +539,16 @@ class ChatViewModel @Inject constructor(
         rows: List<MessageRow>,
         lifeline: List<com.mythara.lifeline.LifelineEntity> = emptyList(),
         tasks: List<com.mythara.tasks.TaskEntity> = emptyList(),
+        audit: List<com.mythara.audit.AuditEntry> = emptyList(),
     ) {
         // Build chat items into a tagged list (ts → item) so we can
         // interleave lifeline photo cards by timestamp at the end.
         val tagged = mutableListOf<Pair<Long, ChatItem>>()
         val localDev = cachedLocalDeviceId
+        // Tracks whether the most recent user turn was an app
+        // notification, so the assistant reply that follows can be
+        // classified as an auto-triage "update" vs a real "reply".
+        var lastUserWasNotif = false
         for (row in rows) {
             // Foreign-device rows (origin device id differs from this
             // install's id) render as a distinct card, not inline. The
@@ -518,6 +558,10 @@ class ChatViewModel @Inject constructor(
             val rowDev = row.deviceId?.takeIf { it.isNotBlank() }
             if (rowDev != null && localDev != null && rowDev != localDev) {
                 if (row.role == "user" || row.role == "assistant") {
+                    if (row.role == "user") {
+                        lastUserWasNotif = row.content.orEmpty()
+                            .startsWith(com.mythara.agent.AgentLoop.NOTIF_PREFIX)
+                    }
                     tagged.add(
                         row.tsMillis to ChatItem.FromOtherDevice(
                             key = "x:${row.id}",
@@ -534,7 +578,18 @@ class ChatViewModel @Inject constructor(
                 if (row.role == "tool") continue
             }
             when (row.role) {
-                "user" -> tagged.add(row.tsMillis to ChatItem.UserText(key = "u:${row.id}", text = row.content.orEmpty()))
+                "user" -> {
+                    val txt = row.content.orEmpty()
+                    val isNotif = txt.startsWith(com.mythara.agent.AgentLoop.NOTIF_PREFIX)
+                    lastUserWasNotif = isNotif
+                    tagged.add(
+                        row.tsMillis to ChatItem.UserText(
+                            key = "u:${row.id}",
+                            text = txt,
+                            kind = if (isNotif) TextKind.Notification else TextKind.User,
+                        ),
+                    )
+                }
                 "assistant" -> {
                     if (!row.content.isNullOrEmpty()) {
                         // Hide NOSURFACE replies entirely — they're the
@@ -574,7 +629,11 @@ class ChatViewModel @Inject constructor(
                                             keepAudioTags = true,
                                         ).ifBlank { seg.content }
                                         tagged.add(
-                                            row.tsMillis to ChatItem.AssistantText(key = "a:${row.id}:$idx", text = display),
+                                            row.tsMillis to ChatItem.AssistantText(
+                                                key = "a:${row.id}:$idx",
+                                                text = display,
+                                                kind = if (lastUserWasNotif) TextKind.Update else TextKind.Reply,
+                                            ),
                                         )
                                     }
                                     is Thinks.Segment.Thought -> tagged.add(
@@ -671,10 +730,38 @@ class ChatViewModel @Inject constructor(
                 ),
             )
         }
+        // People-interaction cards — audit entries that touched a
+        // contact (call / message / WhatsApp / lookup) interleave by
+        // timestamp, same as photos + reminders.
+        for (entry in audit) {
+            val contact = entry.contactName?.takeIf { it.isNotBlank() } ?: continue
+            tagged.add(
+                entry.tsMillis to ChatItem.PersonInteraction(
+                    key = "audit:${entry.id}",
+                    contactName = contact,
+                    action = interactionLabel(entry.toolName, entry.resultOk),
+                    tsMillis = entry.tsMillis,
+                    ok = entry.resultOk,
+                ),
+            )
+        }
         // Stable sort by timestamp; same-ts items keep insertion order
         // so a tool's stdout still follows its own start row.
         val items = tagged.sortedBy { it.first }.map { it.second }.toMutableList()
         items.addAll(inflightTools.values)
         _ui.update { it.copy(items = items, hasRemoteLifeline = hasRemote) }
+    }
+
+    /** Human label for an audit entry that touched a contact. */
+    private fun interactionLabel(toolName: String?, ok: Boolean): String {
+        val verb = when {
+            toolName == null -> "interacted with"
+            toolName.contains("call", ignoreCase = true) -> "called"
+            toolName.contains("whatsapp", ignoreCase = true) -> "messaged on WhatsApp"
+            toolName.contains("sms", ignoreCase = true) -> "texted"
+            toolName.contains("contact", ignoreCase = true) -> "looked up"
+            else -> "interacted with"
+        }
+        return if (ok) verb else "tried to $verb"
     }
 }

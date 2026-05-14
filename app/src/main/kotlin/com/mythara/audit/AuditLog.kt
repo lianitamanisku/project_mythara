@@ -77,6 +77,14 @@ interface AuditDao {
     @Query("SELECT * FROM audit_entries ORDER BY ts_millis DESC LIMIT :limit")
     suspend fun listRecent(limit: Int = 500): List<AuditEntry>
 
+    /** Entries within a half-open [fromMs, toMs) window — for the
+     *  per-day digest the timeline life-log cards are built from. */
+    @Query(
+        "SELECT * FROM audit_entries WHERE ts_millis >= :fromMs AND ts_millis < :toMs " +
+            "ORDER BY ts_millis ASC",
+    )
+    suspend fun listBetween(fromMs: Long, toMs: Long): List<AuditEntry>
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insert(entry: AuditEntry): Long
 

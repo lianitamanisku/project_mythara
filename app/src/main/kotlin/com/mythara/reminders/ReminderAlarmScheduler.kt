@@ -49,6 +49,7 @@ import javax.inject.Singleton
 class ReminderAlarmScheduler @Inject constructor(
     @ApplicationContext private val ctx: Context,
     private val taskRepo: TaskRepository,
+    private val deviceIdStore: com.mythara.memory.DeviceIdStore,
 ) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
@@ -75,12 +76,17 @@ class ReminderAlarmScheduler @Inject constructor(
         reconcile(rows)
     }
 
-    private fun reconcile(rows: List<TaskEntity>) {
+    private suspend fun reconcile(rows: List<TaskEntity>) {
         val am = ctx.getSystemService(Context.ALARM_SERVICE) as? AlarmManager
             ?: return
         val now = System.currentTimeMillis()
+        val localId = runCatching { deviceIdStore.id() }.getOrNull()
         for (task in rows) {
             val sched = task.scheduledForMs ?: continue
+            // Only the target device arms + fires a pinned reminder —
+            // otherwise every synced device would notify in parallel.
+            val target = task.targetDeviceId
+            if (target != null && localId != null && target != localId) continue
             val pi = pendingIntentFor(task.id, mutable = false) ?: continue
             val isLive = task.status in LIVE_STATUSES
             val isFuture = sched > now

@@ -49,6 +49,8 @@ import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.mythara.lifeline.DaySummaryBuilder
+import com.mythara.lifeline.DaySummaryEntity
 import com.mythara.lifeline.LifelineEntity
 import com.mythara.lifeline.LifelineRepository
 import com.mythara.memory.DeviceIdStore
@@ -64,6 +66,9 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.text.SimpleDateFormat
+import java.time.Instant
+import java.time.LocalDate
+import java.time.ZoneId
 import java.util.Date
 import java.util.Locale
 import javax.inject.Inject
@@ -93,12 +98,17 @@ private const val LIMIT = 600
 class TimelineGridViewModel @Inject constructor(
     private val repo: LifelineRepository,
     private val deviceIdStore: DeviceIdStore,
+    private val daySummaryBuilder: DaySummaryBuilder,
 ) : ViewModel() {
 
     @Volatile var localDeviceId: String? = null
         private set
 
     val entries: StateFlow<List<LifelineEntity>> = repo.dao.observeRecent(LIMIT)
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000L), emptyList())
+
+    /** Per-day life-log cards, newest first. */
+    val daySummaries: StateFlow<List<DaySummaryEntity>> = repo.daySummaryDao.observeRecent(180)
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000L), emptyList())
 
     private val _query = MutableStateFlow("")
@@ -108,11 +118,24 @@ class TimelineGridViewModel @Inject constructor(
         viewModelScope.launch {
             localDeviceId = runCatching { deviceIdStore.id() }.getOrNull()
         }
+        // Backfill the last few days' cards so the timeline is fresh
+        // without waiting for the nightly self-organiser pass.
+        viewModelScope.launch {
+            runCatching { daySummaryBuilder.buildRecent(daysBack = 5) }
+        }
     }
 
     fun setQuery(q: String) {
         _query.value = q
     }
+}
+
+/** A row in the timeline grid — a month divider, a day-summary card,
+ *  or a single photo cell. */
+private sealed interface TimelineItem {
+    data class MonthHeader(val label: String, val photoCount: Int) : TimelineItem
+    data class DayCard(val summary: DaySummaryEntity) : TimelineItem
+    data class Photo(val entry: LifelineEntity) : TimelineItem
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -136,10 +159,10 @@ fun TimelineGridPane(onClose: () -> Unit) {
 @Composable
 private fun TimelineGridBody(vm: TimelineGridViewModel = hiltViewModel()) {
     val entries by vm.entries.collectAsState()
+    val daySummaries by vm.daySummaries.collectAsState()
     val query by vm.query.collectAsState()
 
-    // Filter + group by month (most recent first). One header cell per
-    // month so the grid reads as a timeline you can scroll through.
+    // Filter photos by the search query, newest first.
     val filtered = remember(entries, query) {
         val q = query.trim().lowercase()
         val list = if (q.isEmpty()) entries else entries.filter {
@@ -148,7 +171,15 @@ private fun TimelineGridBody(vm: TimelineGridViewModel = hiltViewModel()) {
         }
         list.sortedByDescending { it.takenMs }
     }
-    val grouped = remember(filtered) { groupByMonth(filtered) }
+    // Interleave photos with the per-day life-log cards. When a query
+    // is active we drop the day cards — search is photo-scoped.
+    val timeline = remember(filtered, daySummaries, query) {
+        if (query.isNotBlank()) {
+            buildTimeline(filtered, emptyMap())
+        } else {
+            buildTimeline(filtered, daySummaries.associateBy { it.dayEpoch })
+        }
+    }
 
     Box(modifier = Modifier.fillMaxSize().background(MytharaColors.Bg)) {
         Column(
@@ -163,19 +194,20 @@ private fun TimelineGridBody(vm: TimelineGridViewModel = hiltViewModel()) {
             )
             Spacer(Modifier.height(2.dp))
             Text(
-                text = "${entries.size} photos in your life timeline${if (filtered.size != entries.size) " · ${filtered.size} match" else ""}",
+                text = "${entries.size} photos · ${daySummaries.size} day${if (daySummaries.size == 1) "" else "s"} in your life timeline" +
+                    (if (filtered.size != entries.size) " · ${filtered.size} match" else ""),
                 color = MytharaColors.FgDim,
                 style = MaterialTheme.typography.bodySmall,
             )
             Spacer(Modifier.height(10.dp))
 
-            if (grouped.isEmpty()) {
+            if (timeline.isEmpty()) {
                 Box(
                     modifier = Modifier.fillMaxSize(),
                     contentAlignment = Alignment.Center,
                 ) {
                     Text(
-                        text = "${Glyph.CircleOutline} no photos yet — take one with the camera",
+                        text = "${Glyph.CircleOutline} nothing here yet — take a photo, or let a day pass and Lumi will log it",
                         color = MytharaColors.FgDim,
                         style = MaterialTheme.typography.bodySmall,
                     )
@@ -187,18 +219,122 @@ private fun TimelineGridBody(vm: TimelineGridViewModel = hiltViewModel()) {
                     verticalArrangement = Arrangement.spacedBy(6.dp),
                     horizontalArrangement = Arrangement.spacedBy(6.dp),
                 ) {
-                    for ((monthLabel, photos) in grouped) {
-                        item(key = "h:$monthLabel", span = { GridItemSpan(maxLineSpan) }) {
-                            MonthHeader(monthLabel, photos.size)
-                        }
-                        for (p in photos) {
-                            item(key = "p:${p.deviceId}:${p.mediaStoreId}") {
-                                TimelineCell(p, isLocal = (p.deviceId == vm.localDeviceId) && !p.isRemote)
+                    for (timelineItem in timeline) {
+                        when (timelineItem) {
+                            is TimelineItem.MonthHeader -> item(
+                                key = "h:${timelineItem.label}",
+                                span = { GridItemSpan(maxLineSpan) },
+                            ) {
+                                MonthHeader(timelineItem.label, timelineItem.photoCount)
+                            }
+                            is TimelineItem.DayCard -> item(
+                                key = "d:${timelineItem.summary.dayEpoch}",
+                                span = { GridItemSpan(maxLineSpan) },
+                            ) {
+                                DaySummaryCard(timelineItem.summary)
+                            }
+                            is TimelineItem.Photo -> {
+                                val p = timelineItem.entry
+                                item(key = "p:${p.deviceId}:${p.mediaStoreId}") {
+                                    TimelineCell(p, isLocal = (p.deviceId == vm.localDeviceId) && !p.isRemote)
+                                }
                             }
                         }
                     }
                 }
             }
+        }
+    }
+}
+
+/**
+ * Build the interleaved timeline: walk every content-bearing day
+ * (photos OR a day-summary card) newest-first, emitting a month header
+ * on each month transition, then that day's card + its photos.
+ */
+private fun buildTimeline(
+    photos: List<LifelineEntity>,
+    daySummaries: Map<Long, DaySummaryEntity>,
+): List<TimelineItem> {
+    val zone = ZoneId.systemDefault()
+    val monthFmt = SimpleDateFormat("MMMM yyyy", Locale.getDefault())
+    fun epochOf(ms: Long) = Instant.ofEpochMilli(ms).atZone(zone).toLocalDate().toEpochDay()
+
+    val photosByDay = photos.groupBy { epochOf(it.takenMs) }
+    val photoCountByMonth = photos.groupingBy { monthFmt.format(Date(it.takenMs)) }.eachCount()
+    val allDays = (photosByDay.keys + daySummaries.keys).sortedDescending()
+
+    val out = ArrayList<TimelineItem>()
+    var currentMonth: String? = null
+    for (epoch in allDays) {
+        val dayStartMs = LocalDate.ofEpochDay(epoch).atStartOfDay(zone).toInstant().toEpochMilli()
+        val month = monthFmt.format(Date(dayStartMs))
+        if (month != currentMonth) {
+            currentMonth = month
+            out += TimelineItem.MonthHeader(month, photoCountByMonth[month] ?: 0)
+        }
+        daySummaries[epoch]?.let { out += TimelineItem.DayCard(it) }
+        photosByDay[epoch]?.forEach { out += TimelineItem.Photo(it) }
+    }
+    return out
+}
+
+/**
+ * Full-width life-log card for one day — the day's narrative summary
+ * plus badges for interactions / memories / photos. Built nightly by
+ * [com.mythara.lifeline.DaySummaryBuilder].
+ */
+@Composable
+private fun DaySummaryCard(summary: DaySummaryEntity) {
+    val dayLabel = remember(summary.dateMs) {
+        SimpleDateFormat("EEEE, MMM d", Locale.getDefault()).format(Date(summary.dateMs))
+    }
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(top = 6.dp, bottom = 2.dp)
+            .clip(RoundedCornerShape(10.dp))
+            .background(MytharaColors.Surface)
+            .border(1.dp, MytharaColors.SurfaceHigh, RoundedCornerShape(10.dp))
+            .padding(12.dp),
+    ) {
+        Text(
+            text = "${Glyph.DiamondFilled} $dayLabel",
+            color = MytharaColors.Bok,
+            style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.SemiBold),
+        )
+        Spacer(Modifier.height(4.dp))
+        Text(
+            text = summary.summary,
+            color = MytharaColors.Fg,
+            style = MaterialTheme.typography.bodySmall,
+        )
+        val badges = buildList {
+            if (summary.interactionCount > 0) {
+                add("${summary.interactionCount} interaction${if (summary.interactionCount == 1) "" else "s"}")
+            }
+            if (summary.learningCount > 0) {
+                add("${summary.learningCount} memor${if (summary.learningCount == 1) "y" else "ies"}")
+            }
+            if (summary.photoCount > 0) {
+                add("${summary.photoCount} photo${if (summary.photoCount == 1) "" else "s"}")
+            }
+        }
+        if (badges.isNotEmpty()) {
+            Spacer(Modifier.height(6.dp))
+            Text(
+                text = "${Glyph.AccentBar} ${badges.joinToString(" · ")}",
+                color = MytharaColors.Charple,
+                style = MaterialTheme.typography.labelSmall,
+            )
+        }
+        if (summary.contacts.isNotBlank()) {
+            Spacer(Modifier.height(2.dp))
+            Text(
+                text = summary.contacts,
+                color = MytharaColors.FgDim,
+                style = MaterialTheme.typography.labelSmall,
+            )
         }
     }
 }
@@ -313,12 +449,3 @@ private fun decodeThumb(ctx: Context, uri: Uri): Bitmap? {
     }
 }
 
-private fun groupByMonth(entries: List<LifelineEntity>): List<Pair<String, List<LifelineEntity>>> {
-    val sdf = SimpleDateFormat("MMMM yyyy", Locale.getDefault())
-    val map = linkedMapOf<String, MutableList<LifelineEntity>>()
-    for (e in entries) {
-        val label = sdf.format(Date(e.takenMs))
-        map.getOrPut(label) { mutableListOf() }.add(e)
-    }
-    return map.entries.map { it.key to it.value.toList() }
-}

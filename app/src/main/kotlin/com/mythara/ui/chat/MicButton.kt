@@ -52,6 +52,7 @@ fun MicButton(
     onPartial: (String) -> Unit,
     onFinal: (String) -> Unit,
     onError: (String) -> Unit,
+    muted: Boolean = false,
     size: androidx.compose.ui.unit.Dp = 48.dp,
 ) {
     val ctx = LocalContext.current
@@ -80,13 +81,23 @@ fun MicButton(
         modifier = Modifier
             .size(size)
             .clip(CircleShape)
-            .background(if (listening) MytharaColors.Bok else MytharaColors.Surface)
+            .background(
+                when {
+                    muted -> MytharaColors.SurfaceMid
+                    listening -> MytharaColors.Bok
+                    else -> MytharaColors.Surface
+                },
+            )
             .border(
                 width = 2.dp,
-                color = if (listening) MytharaColors.Bok else MytharaColors.Charple,
+                color = when {
+                    muted -> MytharaColors.FgDim
+                    listening -> MytharaColors.Bok
+                    else -> MytharaColors.Charple
+                },
                 shape = CircleShape,
             )
-            .clickable {
+            .clickable(enabled = !muted) {
                 if (listening) {
                     listenJob?.cancel()
                     listening = false
@@ -113,7 +124,11 @@ fun MicButton(
     ) {
         Text(
             text = if (listening) Glyph.Dot else Glyph.CircleFilled,
-            color = if (listening) MytharaColors.Bg else MytharaColors.Charple,
+            color = when {
+                muted -> MytharaColors.FgDim
+                listening -> MytharaColors.Bg
+                else -> MytharaColors.Charple
+            },
             style = MaterialTheme.typography.titleMedium,
         )
     }

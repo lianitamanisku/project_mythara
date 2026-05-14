@@ -96,6 +96,12 @@ fun ChatScreen(
     onOpenTimeline: (() -> Unit)? = null,
     /** Same pattern for the cross-device tasks screen. */
     onOpenTasks: (() -> Unit)? = null,
+    /** Opens the animated-face interface. Null hides the menu entry. */
+    onOpenFace: (() -> Unit)? = null,
+    /** Opens the self-profile "About Me" screen. Null hides the menu entry. */
+    onOpenAboutMe: (() -> Unit)? = null,
+    /** Opens the relationship-graph Insights screen. Null hides the menu entry. */
+    onOpenInsights: (() -> Unit)? = null,
     vm: ChatViewModel = hiltViewModel(),
 ) {
     val ui by vm.ui.collectAsState()
@@ -276,11 +282,10 @@ fun ChatScreen(
         }
     }
 
-    Column(
+    Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(MytharaColors.Bg)
-            .padding(insets),
+            .background(MytharaColors.Bg),
     ) {
         var appDrawerOpen by remember { mutableStateOf(false) }
         var timelineOpen by remember { mutableStateOf(false) }
@@ -291,16 +296,15 @@ fun ChatScreen(
         val openDrawer: () -> Unit = onOpenAppDrawer ?: { appDrawerOpen = true }
         val openTimeline: () -> Unit = onOpenTimeline ?: { timelineOpen = true }
         val openTasks: () -> Unit = onOpenTasks ?: { tasksOpen = true }
-        ChatHeader(
-            onOpenSettings = onOpenSettings,
-            onOpenPeople = onOpenPeople,
-            onOpenAppDrawer = openDrawer,
-            onOpenTimeline = openTimeline,
-            onOpenTasks = openTasks,
-            thinking = ui.thinking,
-            continuousMode = ui.continuousMode,
-            onToggleContinuous = { vm.setContinuousMode(!ui.continuousMode) },
-        )
+
+        // Chat content fills the screen; the nav menu floats over the
+        // top-right corner (see ChatMenuFab below) instead of the old
+        // six-pill header eating a fixed band of vertical space.
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(insets),
+        ) {
 
         if (appDrawerOpen && onOpenAppDrawer == null) {
             com.mythara.ui.launcher.AppDrawerSheet(onDismiss = { appDrawerOpen = false })
@@ -351,6 +355,7 @@ fun ChatScreen(
             }
         }
 
+        val speechMuted by vm.micBroker.muted.collectAsState()
         Composer(
             // The Composer distinguishes mic-driven vs typed input
             // — both call this callback but with different
@@ -360,6 +365,29 @@ fun ChatScreen(
             enabled = !ui.thinking,
             incomingDictation = dictation,
             onDictationConsumed = { dictation = null },
+            speechMuted = speechMuted,
+            onToggleSpeechMute = { vm.micBroker.setMuted(!speechMuted) },
+        )
+        }
+
+        // Floating nav menu — replaces the old top pill row, reclaiming
+        // the vertical band it used to occupy.
+        ChatMenuFab(
+            thinking = ui.thinking,
+            continuousMode = ui.continuousMode,
+            onToggleContinuous = { vm.setContinuousMode(!ui.continuousMode) },
+            onOpenPeople = onOpenPeople,
+            onOpenTimeline = openTimeline,
+            onOpenAppDrawer = openDrawer,
+            onOpenTasks = openTasks,
+            onOpenSettings = onOpenSettings,
+            onOpenFace = onOpenFace,
+            onOpenAboutMe = onOpenAboutMe,
+            onOpenInsights = onOpenInsights,
+            modifier = Modifier
+                .align(Alignment.TopEnd)
+                .padding(insets)
+                .padding(top = 6.dp, end = 12.dp),
         )
     }
 
@@ -380,131 +408,160 @@ fun ChatScreen(
     }
 }
 
+/**
+ * Floating nav menu — replaces the old always-visible six-pill header
+ * row. Collapsed it's a single 44dp Mythara-diamond button in the
+ * top-right corner (showing the thinking ellipsis while the agent
+ * runs). Tapped, it drops down a vertical menu of the same
+ * destinations — voice toggle, people, memory, apps, tasks, settings
+ * — overlaying the chat instead of permanently occupying a band of
+ * vertical space.
+ */
 @Composable
-private fun ChatHeader(
-    onOpenSettings: () -> Unit,
-    onOpenPeople: () -> Unit,
-    onOpenAppDrawer: () -> Unit,
-    onOpenTimeline: () -> Unit,
-    onOpenTasks: () -> Unit,
+private fun ChatMenuFab(
     thinking: Boolean,
     continuousMode: Boolean,
     onToggleContinuous: () -> Unit,
+    onOpenPeople: () -> Unit,
+    onOpenTimeline: () -> Unit,
+    onOpenAppDrawer: () -> Unit,
+    onOpenTasks: () -> Unit,
+    onOpenSettings: () -> Unit,
+    onOpenFace: (() -> Unit)? = null,
+    onOpenAboutMe: (() -> Unit)? = null,
+    onOpenInsights: (() -> Unit)? = null,
+    modifier: Modifier = Modifier,
 ) {
-    Row(
-        modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.SpaceBetween,
+    var expanded by remember { mutableStateOf(false) }
+    Column(
+        modifier = modifier,
+        horizontalAlignment = Alignment.End,
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Box(
+            modifier = Modifier
+                .size(44.dp)
+                .clip(CircleShape)
+                .background(MytharaColors.Surface)
+                .border(1.5.dp, MytharaColors.Charple, CircleShape)
+                .clickable { expanded = !expanded },
+            contentAlignment = Alignment.Center,
+        ) {
+            Text(
+                text = when {
+                    expanded -> Glyph.Cross
+                    thinking -> Glyph.Ellipsis
+                    else -> Glyph.DiamondFilled
+                },
+                style = MaterialTheme.typography.titleMedium.copy(
+                    color = MytharaColors.Charple, fontWeight = FontWeight.Bold,
+                ),
+            )
+        }
+        if (expanded) {
+            // Voice toggle stays open so the user can flip it and keep
+            // scanning; the nav items close the menu on tap.
+            ChatMenuItem(
+                label = if (continuousMode) "${Glyph.Dot} voice on" else "${Glyph.CircleOutline} voice off",
+                accent = if (continuousMode) MytharaColors.Bok else MytharaColors.SurfaceHigh,
+                textColor = if (continuousMode) MytharaColors.Bok else MytharaColors.FgMute,
+                onClick = onToggleContinuous,
+            )
+            if (onOpenFace != null) {
+                ChatMenuItem("${Glyph.DiamondFilled} face", MytharaColors.Bok, MytharaColors.Bok) {
+                    expanded = false
+                    onOpenFace()
+                }
+            }
+            if (onOpenAboutMe != null) {
+                ChatMenuItem("${Glyph.DiamondFilled} about me", MytharaColors.Malibu, MytharaColors.Malibu) {
+                    expanded = false
+                    onOpenAboutMe()
+                }
+            }
+            if (onOpenInsights != null) {
+                ChatMenuItem("${Glyph.DiamondFilled} insights", MytharaColors.Bok, MytharaColors.Bok) {
+                    expanded = false
+                    onOpenInsights()
+                }
+            }
+            ChatMenuItem("${Glyph.DiamondFilled} people", MytharaColors.Charple, MytharaColors.Charple) {
+                expanded = false; onOpenPeople()
+            }
+            ChatMenuItem("${Glyph.DiamondFilled} memory", MytharaColors.Bok, MytharaColors.Bok) {
+                expanded = false; onOpenTimeline()
+            }
+            ChatMenuItem("${Glyph.DiamondFilled} apps", MytharaColors.Mustard, MytharaColors.Mustard) {
+                expanded = false; onOpenAppDrawer()
+            }
+            TasksPill(onClick = { expanded = false; onOpenTasks() })
+            ChatMenuItem("⚙ settings", MytharaColors.SurfaceHigh, MytharaColors.FgMute) {
+                expanded = false; onOpenSettings()
+            }
+        }
+    }
+}
+
+@Composable
+private fun ChatMenuItem(
+    label: String,
+    accent: androidx.compose.ui.graphics.Color,
+    textColor: androidx.compose.ui.graphics.Color,
+    onClick: () -> Unit,
+) {
+    Box(
+        modifier = Modifier
+            .clip(CircleShape)
+            .background(MytharaColors.Surface)
+            .border(1.dp, accent, CircleShape)
+            .clickable(onClick = onClick)
+            .padding(horizontal = 12.dp, vertical = 6.dp),
     ) {
         Text(
-            text = "${if (thinking) Glyph.Ellipsis else Glyph.DiamondFilled} mythara",
-            style = MaterialTheme.typography.labelLarge.copy(
-                color = MytharaColors.Charple, fontWeight = FontWeight.Bold,
-            ),
+            text = label,
+            style = MaterialTheme.typography.labelMedium.copy(color = textColor),
         )
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            // Voice-chat toggle. ◇ when off, ● in Bok when on — same
-            // motif as the wake-word panel's "listening" indicator so
-            // the user reads "live mic" consistently across surfaces.
-            Box(
-                modifier = Modifier
-                    .clip(CircleShape)
-                    .background(if (continuousMode) MytharaColors.Bok else MytharaColors.Surface)
-                    .border(
-                        1.dp,
-                        if (continuousMode) MytharaColors.Bok else MytharaColors.SurfaceHigh,
-                        CircleShape,
-                    )
-                    .clickable(onClick = onToggleContinuous)
-                    .padding(horizontal = 10.dp, vertical = 4.dp),
-            ) {
-                Text(
-                    text = if (continuousMode) "${Glyph.Dot} voice on" else "${Glyph.CircleOutline} voice off",
-                    style = MaterialTheme.typography.labelMedium.copy(
-                        color = if (continuousMode) MytharaColors.Bg else MytharaColors.FgMute,
-                    ),
-                )
-            }
-            Spacer(Modifier.size(8.dp))
-            // People / analytics pill — Charple-bordered to draw the
-            // eye since this is the surface the user opens to prep
-            // for a conversation. Sits left of the app-drawer pill
-            // and settings.
-            Box(
-                modifier = Modifier
-                    .clip(CircleShape)
-                    .background(MytharaColors.Surface)
-                    .border(1.dp, MytharaColors.Charple, CircleShape)
-                    .clickable(onClick = onOpenPeople)
-                    .padding(horizontal = 10.dp, vertical = 4.dp),
-            ) {
-                Text(
-                    text = "${Glyph.DiamondFilled} people",
-                    style = MaterialTheme.typography.labelMedium.copy(color = MytharaColors.Charple),
-                )
-            }
-            Spacer(Modifier.size(8.dp))
-            // Timeline pill — Bok mint. Tap opens the dedicated
-            // lifeline grid screen (months → photos grid). Inline
-            // photos still appear in the chat scrollback; this is the
-            // "browse my memory" surface for skimming.
-            Box(
-                modifier = Modifier
-                    .clip(CircleShape)
-                    .background(MytharaColors.Surface)
-                    .border(1.dp, MytharaColors.Bok, CircleShape)
-                    .clickable(onClick = onOpenTimeline)
-                    .padding(horizontal = 10.dp, vertical = 4.dp),
-            ) {
-                Text(
-                    text = "${Glyph.DiamondFilled} memory",
-                    style = MaterialTheme.typography.labelMedium.copy(color = MytharaColors.Bok),
-                )
-            }
-            Spacer(Modifier.size(8.dp))
-            // App drawer pill — Mustard yellow. Tap opens the launcher-
-            // style grid of installed apps. Mythara is registered as a
-            // HOME-category Activity in the manifest, so the user can
-            // set it as their default launcher; this drawer fills the
-            // role a normal launcher's app drawer plays.
-            Box(
-                modifier = Modifier
-                    .clip(CircleShape)
-                    .background(MytharaColors.Surface)
-                    .border(1.dp, MytharaColors.Mustard, CircleShape)
-                    .clickable(onClick = onOpenAppDrawer)
-                    .padding(horizontal = 10.dp, vertical = 4.dp),
-            ) {
-                Text(
-                    text = "${Glyph.DiamondFilled} apps",
-                    style = MaterialTheme.typography.labelMedium.copy(color = MytharaColors.Mustard),
-                )
-            }
-            Spacer(Modifier.size(8.dp))
-            // Tasks pill — Malibu blue. Tap opens the cross-device
-            // task list. The count badge appears only when there are
-            // pending/claimed/running tasks anywhere in the cluster.
-            TasksPill(onClick = onOpenTasks)
-            Spacer(Modifier.size(8.dp))
-            // Settings — gear icon only. Pills above each carry a
-            // distinct visible accent (Bok / Mustard / Charple /
-            // Malibu); Settings is the muted "tap to configure"
-            // affordance so it stays out of the visual hierarchy.
-            // Compact icon-only also saves horizontal space on
-            // compact phones now that the header is six pills deep.
-            Box(
-                modifier = Modifier
-                    .clip(CircleShape)
-                    .background(MytharaColors.Surface)
-                    .border(1.dp, MytharaColors.SurfaceHigh, CircleShape)
-                    .clickable(onClick = onOpenSettings)
-                    .padding(horizontal = 8.dp, vertical = 4.dp),
-            ) {
-                Text(
-                    text = "⚙",
-                    style = MaterialTheme.typography.labelMedium.copy(color = MytharaColors.FgMute),
-                )
-            }
+    }
+}
+
+/**
+ * Compact timeline card for a logged interaction with a contact —
+ * who Lumi called / messaged / looked up, and when. Interleaved into
+ * the scrollback by the interaction's timestamp.
+ */
+@Composable
+private fun PersonInteractionCard(item: ChatViewModel.ChatItem.PersonInteraction) {
+    val time = remember(item.tsMillis) {
+        java.text.SimpleDateFormat("MMM d, h:mm a", java.util.Locale.getDefault())
+            .format(java.util.Date(item.tsMillis))
+    }
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 12.dp, vertical = 4.dp)
+            .clip(RoundedCornerShape(12.dp))
+            .background(MytharaColors.Surface)
+            .border(1.dp, MytharaColors.SurfaceHigh, RoundedCornerShape(12.dp))
+            .padding(horizontal = 12.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            text = Glyph.DiamondFilled,
+            color = if (item.ok) MytharaColors.Charple else MytharaColors.Sriracha,
+            style = MaterialTheme.typography.bodyMedium,
+        )
+        Spacer(Modifier.size(10.dp))
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = "${item.action} ${item.contactName}",
+                color = MytharaColors.Fg,
+                style = MaterialTheme.typography.bodyMedium,
+            )
+            Text(
+                text = time,
+                color = MytharaColors.FgDim,
+                style = MaterialTheme.typography.labelSmall,
+            )
         }
     }
 }
@@ -554,18 +611,19 @@ private fun Transcript(
     ) {
         items(items, key = { it.key }) { item ->
             when (item) {
-                is ChatViewModel.ChatItem.UserText -> TextBubble(role = "you", text = item.text, isUser = true)
-                is ChatViewModel.ChatItem.AssistantText -> TextBubble(role = "mythara", text = item.text, isUser = false)
+                is ChatViewModel.ChatItem.UserText -> TextBubble(text = item.text, kind = item.kind)
+                is ChatViewModel.ChatItem.AssistantText -> TextBubble(text = item.text, kind = item.kind)
                 is ChatViewModel.ChatItem.Thought -> ThoughtBubble(item)
                 is ChatViewModel.ChatItem.Tool -> ToolCallBubble(item)
                 is ChatViewModel.ChatItem.FromOtherDevice -> FromOtherDeviceCard(item)
                 is ChatViewModel.ChatItem.LifelinePhoto -> LifelineCard(item)
                 is ChatViewModel.ChatItem.ReminderCard -> ReminderCard(item)
+                is ChatViewModel.ChatItem.PersonInteraction -> PersonInteractionCard(item)
             }
         }
         if (streamingActive) {
             item("streaming") {
-                TextBubble(role = "mythara", text = streaming + Glyph.AccentBar, isUser = false)
+                TextBubble(text = streaming + Glyph.AccentBar, kind = ChatViewModel.TextKind.Reply)
             }
         } else if (thinkingVisible) {
             // Rolodex thinking indicator with the Charple→Bok brand
@@ -579,16 +637,48 @@ private fun Transcript(
     }
 }
 
+/**
+ * Plain text bubble, color-coded by [ChatViewModel.TextKind]:
+ *  - User         → Charple frame, right-aligned
+ *  - Notification → Mustard frame + label, body de-emphasised
+ *                   (the `[notif]` prefix is stripped — the frame
+ *                   already says "this is a notification")
+ *  - Reply        → calm SurfaceHigh frame, Bok label (the common case)
+ *  - Update       → Malibu frame + label (agent reacting to a notification)
+ */
 @Composable
-private fun TextBubble(role: String, text: String, isUser: Boolean) {
-    val bg = if (isUser) MytharaColors.SurfaceMid else MytharaColors.Surface
-    val border = if (isUser) MytharaColors.Charple else MytharaColors.SurfaceHigh
+private fun TextBubble(text: String, kind: ChatViewModel.TextKind) {
+    val isUser = kind == ChatViewModel.TextKind.User || kind == ChatViewModel.TextKind.Notification
+    val accent = when (kind) {
+        ChatViewModel.TextKind.User -> MytharaColors.Charple
+        ChatViewModel.TextKind.Notification -> MytharaColors.Mustard
+        ChatViewModel.TextKind.Reply -> MytharaColors.Bok
+        ChatViewModel.TextKind.Update -> MytharaColors.Malibu
+    }
+    val label = when (kind) {
+        ChatViewModel.TextKind.User -> "you"
+        ChatViewModel.TextKind.Notification -> "notification"
+        ChatViewModel.TextKind.Reply -> "mythara"
+        ChatViewModel.TextKind.Update -> "mythara · update"
+    }
+    val border = when (kind) {
+        ChatViewModel.TextKind.User -> MytharaColors.Charple
+        ChatViewModel.TextKind.Notification -> MytharaColors.Mustard
+        ChatViewModel.TextKind.Update -> MytharaColors.Malibu
+        ChatViewModel.TextKind.Reply -> MytharaColors.SurfaceHigh
+    }
+    val bg = if (kind == ChatViewModel.TextKind.User) MytharaColors.SurfaceMid else MytharaColors.Surface
+    val bodyColor = if (kind == ChatViewModel.TextKind.Notification) MytharaColors.FgMute else MytharaColors.Fg
     val align = if (isUser) Alignment.End else Alignment.Start
-    val accent = if (isUser) MytharaColors.Charple else MytharaColors.Bok
+    val displayText = if (kind == ChatViewModel.TextKind.Notification) {
+        text.removePrefix(com.mythara.agent.AgentLoop.NOTIF_PREFIX).trim()
+    } else {
+        text
+    }
 
     Column(modifier = Modifier.fillMaxWidth(), horizontalAlignment = align) {
         Text(
-            text = "${Glyph.DiamondFilled} $role",
+            text = "${Glyph.DiamondFilled} $label",
             style = MaterialTheme.typography.labelMedium.copy(color = accent),
             modifier = Modifier.padding(bottom = 2.dp),
         )
@@ -599,7 +689,7 @@ private fun TextBubble(role: String, text: String, isUser: Boolean) {
                 .border(1.dp, border, RoundedCornerShape(10.dp))
                 .padding(horizontal = 12.dp, vertical = 8.dp),
         ) {
-            Text(text = text, color = MytharaColors.Fg, style = MaterialTheme.typography.bodyMedium)
+            Text(text = displayText, color = bodyColor, style = MaterialTheme.typography.bodyMedium)
         }
     }
 }
@@ -618,6 +708,9 @@ private fun Composer(
      */
     incomingDictation: String? = null,
     onDictationConsumed: () -> Unit = {},
+    /** Global speech-to-text mute — disables the mic button entirely. */
+    speechMuted: Boolean = false,
+    onToggleSpeechMute: () -> Unit = {},
 ) {
     var draft by remember { mutableStateOf("") }
     // Apply incoming dictation exactly once per (string, identity).
@@ -637,9 +730,32 @@ private fun Composer(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(10.dp),
     ) {
+        // STT mute toggle — hard kill-switch for every speech-to-text
+        // path (wake-word, Observe, continuous chat, push-to-talk).
+        Box(
+            modifier = Modifier
+                .size(48.dp)
+                .clip(RoundedCornerShape(24.dp))
+                .background(if (speechMuted) MytharaColors.Sriracha else MytharaColors.Surface)
+                .border(
+                    2.dp,
+                    if (speechMuted) MytharaColors.Sriracha else MytharaColors.SurfaceHigh,
+                    RoundedCornerShape(24.dp),
+                )
+                .clickable { onToggleSpeechMute() },
+            contentAlignment = Alignment.Center,
+        ) {
+            Text(
+                text = if (speechMuted) "MUTE" else "STT",
+                color = if (speechMuted) MytharaColors.Bg else MytharaColors.FgMute,
+                style = MaterialTheme.typography.labelSmall,
+            )
+        }
+
         // Mic button — push-to-talk via SpeechRecognizer. Partials stream into
         // the draft field; final fires submit() with fromVoice=true so the
-        // agent loop produces a voice-friendly short reply.
+        // agent loop produces a voice-friendly short reply. Disabled while
+        // speech-to-text is muted.
         MicButton(
             onPartial = { draft = it },
             onFinal = {
@@ -649,6 +765,7 @@ private fun Composer(
                 }
             },
             onError = { /* surface later via VM event channel */ },
+            muted = speechMuted,
         )
 
         Box(

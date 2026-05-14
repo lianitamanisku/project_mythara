@@ -19,6 +19,14 @@ interface LearningDao {
     @Query("SELECT * FROM learnings WHERE tier = :tier ORDER BY tsMillis DESC LIMIT :limit")
     suspend fun listByTier(tier: String, limit: Int = 100): List<LearningEntity>
 
+    /** All records within a half-open [fromMs, toMs) window, any tier —
+     *  for the per-day timeline digest. */
+    @Query(
+        "SELECT * FROM learnings WHERE tsMillis >= :fromMs AND tsMillis < :toMs " +
+            "ORDER BY tsMillis ASC LIMIT :limit",
+    )
+    suspend fun listBetween(fromMs: Long, toMs: Long, limit: Int = 300): List<LearningEntity>
+
     /**
      * For episodic promotion: pull working-tier records added since the
      * last promotion run. Embedded records only (no point clustering

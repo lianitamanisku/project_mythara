@@ -1579,6 +1579,7 @@ class MemorySync @Inject constructor(
         val completedMs: Long? = null,
         val result: String? = null,
         val schedFor: Long? = null,
+        val rec: String? = null,    // recurrence spec; null = one-shot
     )
 
     @Serializable
@@ -1887,6 +1888,7 @@ internal fun com.mythara.tasks.TaskEntity.toExport(): MemorySync.TaskExport =
         completedMs = completedMs,
         result = resultText,
         schedFor = scheduledForMs,
+        rec = recurrence,
     )
 
 /** Wire shape → DB row. syncedAtMs left null so the next push re-uploads
@@ -1905,6 +1907,7 @@ internal fun MemorySync.TaskExport.toRow(): com.mythara.tasks.TaskEntity =
         completedMs = completedMs,
         resultText = result,
         scheduledForMs = schedFor,
+        recurrence = rec,
     )
 
 /**

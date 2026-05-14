@@ -96,6 +96,11 @@ class LearningVault @Inject constructor(
     suspend fun listRecent(limit: Int = 50, offset: Int = 0): List<LearningEntity> = dao.listRecent(limit, offset)
     suspend fun countByTier(tier: Tier): Int = dao.countByTier(tier.code)
     suspend fun listByTier(tier: Tier, limit: Int = 100): List<LearningEntity> = dao.listByTier(tier.code, limit)
+
+    /** All vault rows within a half-open [fromMs, toMs) window, any
+     *  tier — used by the timeline's per-day digest builder. */
+    suspend fun listBetween(fromMs: Long, toMs: Long, limit: Int = 300): List<LearningEntity> =
+        dao.listBetween(fromMs, toMs, limit)
     suspend fun unsyncedRecords(): List<LearningEntity> = dao.listUnsynced()
 
     /**

@@ -16,11 +16,15 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import com.mythara.auth.AuthState
+import com.mythara.ui.about.AboutMeScreen
 import com.mythara.ui.about.AboutScreen
 import com.mythara.ui.auth.AuthGate
 import com.mythara.ui.auth.AuthViewModel
 import com.mythara.ui.chat.ChatScreen
 import com.mythara.ui.dashboard.DashboardLayout
+import com.mythara.ui.face.FaceScreen
+import com.mythara.ui.insights.InsightsScreen
+import com.mythara.ui.notes.NotesScreen
 import com.mythara.ui.onboarding.OnboardingScreen
 import com.mythara.ui.util.isTabletDisplay
 import com.mythara.ui.secret.SecretSettingsScreen
@@ -148,7 +152,19 @@ fun MytharaRoot(
                                 ChatScreen(
                                     onOpenSettings = { nav.navigate(Routes.Settings) },
                                     onOpenPeople = { nav.navigate(Routes.People) },
+                                    onOpenFace = { nav.navigate(Routes.Face) },
+                                    onOpenAboutMe = { nav.navigate(Routes.AboutMe) },
+                                    onOpenInsights = { nav.navigate(Routes.Insights) },
                                 )
+                            }
+                            composable(Routes.Face) {
+                                FaceScreen(onBack = { nav.popBackStack() })
+                            }
+                            composable(Routes.AboutMe) {
+                                AboutMeScreen(onBack = { nav.popBackStack() })
+                            }
+                            composable(Routes.Insights) {
+                                InsightsScreen(onBack = { nav.popBackStack() })
                             }
                             composable(Routes.Settings) {
                                 SettingsScreen(
@@ -169,7 +185,13 @@ fun MytharaRoot(
                                 )
                             }
                             composable(Routes.SecretSettings) {
-                                SecretSettingsScreen(onBack = { nav.popBackStack() })
+                                SecretSettingsScreen(
+                                    onBack = { nav.popBackStack() },
+                                    onOpenNotes = { nav.navigate(Routes.Notes) },
+                                )
+                            }
+                            composable(Routes.Notes) {
+                                NotesScreen(onBack = { nav.popBackStack() })
                             }
                         }
                     } else if (isTablet) {
@@ -203,6 +225,10 @@ object Routes {
     const val Chat = "chat"
     const val Settings = "settings"
     const val About = "about"
+    const val AboutMe = "about-me"
+    const val Insights = "insights"
     const val SecretSettings = "secret"
+    const val Notes = "notes"
     const val People = "people"
+    const val Face = "face"
 }

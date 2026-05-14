@@ -21,9 +21,10 @@ import javax.inject.Singleton
  *
  *   "LUMI (autopilot): I'll be there at 5"
  *
- * When the stored value is blank/empty, messages go as-is — no prefix,
- * no separator. That's the default state for fresh installs; the user
- * has to opt in by typing one.
+ * Fresh installs are pre-filled with [DEFAULT_PREFIX] — a short
+ * "this is an AI assistant" disclaimer — so auto-replies are marked
+ * out of the box. The user can edit it in Settings, or clear it to
+ * an empty string to send messages with no prefix at all.
  *
  * Scope: AUTO-REPLY ONLY. When the user explicitly asks Lumi to text
  * someone ("text mom I'm running late"), the user's intent stands and
@@ -47,11 +48,19 @@ class AutoReplyPrefixStore @Inject constructor(
 
     private val keyPrefix = stringPreferencesKey("autoreply.prefix")
 
-    fun prefixFlow(): Flow<String> = ctx.dataStore.data.map { it[keyPrefix].orEmpty() }
+    // `?: DEFAULT_PREFIX` only fires when the key was never written —
+    // i.e. a fresh install. Once the user saves anything (including an
+    // empty string to disable the prefix), their value stands.
+    fun prefixFlow(): Flow<String> = ctx.dataStore.data.map { it[keyPrefix] ?: DEFAULT_PREFIX }
 
     suspend fun prefix(): String = prefixFlow().first()
 
     suspend fun setPrefix(value: String) {
         ctx.dataStore.edit { it[keyPrefix] = value }
+    }
+
+    companion object {
+        /** Pre-filled on fresh installs; editable / clearable in Settings. */
+        const val DEFAULT_PREFIX = "I'm Anku's personal AI assistant and I can make mistakes"
     }
 }

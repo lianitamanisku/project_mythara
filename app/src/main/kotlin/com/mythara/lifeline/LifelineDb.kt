@@ -229,9 +229,47 @@ interface LifelineDao {
     suspend fun markDeleted(id: Long, nowMs: Long)
 }
 
-@Database(entities = [LifelineEntity::class], version = 2, exportSchema = false)
+/**
+ * One row per calendar day — a digest of that day's interactions,
+ * meaningful memories, learnings, and photos. Built nightly by
+ * [DaySummaryBuilder] and interleaved into the timeline grid so the
+ * "memory" surface reads as a life log, not just a photo wall.
+ */
+@Entity(tableName = "day_summaries")
+data class DaySummaryEntity(
+    /** Days since the Unix epoch (LocalDate.toEpochDay) — stable PK. */
+    @PrimaryKey @ColumnInfo(name = "day_epoch") val dayEpoch: Long,
+    /** Start-of-day epoch millis (local TZ) — for sorting + display. */
+    @ColumnInfo(name = "date_ms") val dateMs: Long,
+    val summary: String,
+    @ColumnInfo(name = "interaction_count") val interactionCount: Int,
+    @ColumnInfo(name = "learning_count") val learningCount: Int,
+    @ColumnInfo(name = "photo_count") val photoCount: Int,
+    /** Comma-joined top contact names interacted with that day. */
+    val contacts: String,
+    @ColumnInfo(name = "built_ms") val builtMs: Long,
+)
+
+@Dao
+interface DaySummaryDao {
+    @Query("SELECT * FROM day_summaries ORDER BY date_ms DESC LIMIT :limit")
+    fun observeRecent(limit: Int = 180): Flow<List<DaySummaryEntity>>
+
+    @Query("SELECT * FROM day_summaries WHERE day_epoch = :dayEpoch LIMIT 1")
+    suspend fun byDay(dayEpoch: Long): DaySummaryEntity?
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsert(row: DaySummaryEntity)
+}
+
+@Database(
+    entities = [LifelineEntity::class, DaySummaryEntity::class],
+    version = 3,
+    exportSchema = false,
+)
 abstract class LifelineDb : RoomDatabase() {
     abstract fun dao(): LifelineDao
+    abstract fun daySummaryDao(): DaySummaryDao
 }
 
 /**
@@ -246,10 +284,29 @@ private val MIGRATION_LIFELINE_1_2 = object : androidx.room.migration.Migration(
     }
 }
 
+/** v2 → v3 adds the day_summaries table for the timeline life-log cards. */
+private val MIGRATION_LIFELINE_2_3 = object : androidx.room.migration.Migration(2, 3) {
+    override fun migrate(db: androidx.sqlite.db.SupportSQLiteDatabase) {
+        db.execSQL(
+            "CREATE TABLE IF NOT EXISTS `day_summaries` (" +
+                "`day_epoch` INTEGER NOT NULL, " +
+                "`date_ms` INTEGER NOT NULL, " +
+                "`summary` TEXT NOT NULL, " +
+                "`interaction_count` INTEGER NOT NULL, " +
+                "`learning_count` INTEGER NOT NULL, " +
+                "`photo_count` INTEGER NOT NULL, " +
+                "`contacts` TEXT NOT NULL, " +
+                "`built_ms` INTEGER NOT NULL, " +
+                "PRIMARY KEY(`day_epoch`))",
+        )
+    }
+}
+
 @Singleton
 class LifelineRepository @Inject constructor(@ApplicationContext ctx: Context) {
     private val db: LifelineDb = Room.databaseBuilder(
         ctx, LifelineDb::class.java, "mythara_lifeline.db",
-    ).addMigrations(MIGRATION_LIFELINE_1_2).build()
+    ).addMigrations(MIGRATION_LIFELINE_1_2, MIGRATION_LIFELINE_2_3).build()
     val dao: LifelineDao = db.dao()
+    val daySummaryDao: DaySummaryDao = db.daySummaryDao()
 }
