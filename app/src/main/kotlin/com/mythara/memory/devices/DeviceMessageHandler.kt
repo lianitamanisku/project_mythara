@@ -37,6 +37,7 @@ class DeviceMessageHandler @Inject constructor(
     private val repo: DeviceMessageRepository,
     private val deviceIdStore: DeviceIdStore,
     private val history: com.mythara.data.HistoryRepository,
+    private val sensorsTool: com.mythara.agent.tools.ReadSensorsTool,
 ) {
     @Serializable
     data class LocationResponsePayload(
@@ -59,6 +60,12 @@ class DeviceMessageHandler @Inject constructor(
             DeviceMessageKind.LOCATION_RESPONSE -> handleLocationResponse(msg)
             DeviceMessageKind.PING -> repo.dao.setStatus(msg.id, DeviceMessageStatus.HANDLED)
             DeviceMessageKind.CHAT_NOTE -> handleChatNote(msg)
+            DeviceMessageKind.SENSOR_REQUEST -> handleSensorRequest(msg)
+            DeviceMessageKind.SENSOR_RESPONSE -> {
+                // Requester-side polling tool reads back via byRequestId —
+                // nothing to do here beyond marking handled.
+                repo.dao.setStatus(msg.id, DeviceMessageStatus.HANDLED)
+            }
             else -> {
                 Log.w(TAG, "unknown message kind '${msg.kind}' — marking handled")
                 repo.dao.setStatus(msg.id, DeviceMessageStatus.HANDLED, "unknown kind")
@@ -99,6 +106,33 @@ class DeviceMessageHandler @Inject constructor(
         val title: String,
         val body: String = "",
     )
+
+    /**
+     * Recipient-side: read every sensor on THIS device and ship the
+     * snapshot back to the requester as a SENSOR_RESPONSE message.
+     * The payload is the raw JsonObject from [ReadSensorsTool.collectSnapshot]
+     * encoded as a string — the requesting tool parses it back.
+     */
+    private suspend fun handleSensorRequest(msg: DeviceMessageEntity) {
+        val payload = runCatching {
+            withContext(Dispatchers.IO) { sensorsTool.collectSnapshot().toString() }
+        }.getOrElse { e ->
+            """{"ok":false,"error":${kotlinx.serialization.json.JsonPrimitive(e.message ?: e.javaClass.simpleName)}}"""
+        }
+        val response = DeviceMessageEntity(
+            id = UUID.randomUUID().toString(),
+            tsMillis = System.currentTimeMillis(),
+            fromDevice = deviceIdStore.id(),
+            toDevice = msg.fromDevice,
+            kind = DeviceMessageKind.SENSOR_RESPONSE,
+            requestId = msg.requestId ?: msg.id,
+            payloadJson = payload,
+            status = DeviceMessageStatus.PENDING,
+        )
+        repo.dao.insertIfAbsent(response)
+        repo.dao.setStatus(msg.id, DeviceMessageStatus.HANDLED)
+        Log.d(TAG, "answered sensor_request ${msg.id} from ${msg.fromDevice} (${payload.length}B)")
+    }
 
     private suspend fun handleLocationRequest(msg: DeviceMessageEntity) {
         val payload: LocationResponsePayload = runCatching {

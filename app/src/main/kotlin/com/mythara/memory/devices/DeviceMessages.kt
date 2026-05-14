@@ -122,6 +122,10 @@ object DeviceMessageKind {
     /** Status update on an existing task (claimed / running / done /
      *  failed). Payload: {"taskId":..., "status":..., "note":...}. */
     const val TASK_UPDATE = "task_update"
+    /** Ask the recipient for a comprehensive sensor snapshot. */
+    const val SENSOR_REQUEST = "sensor_request"
+    /** Recipient's full sensor JSON, indexed back to the original requestId. */
+    const val SENSOR_RESPONSE = "sensor_response"
 }
 
 object DeviceMessageStatus {

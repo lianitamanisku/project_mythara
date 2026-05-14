@@ -11,6 +11,7 @@ import com.mythara.lifeline.LifelineScheduler
 import com.mythara.lifeline.MediaStoreObserver
 import com.mythara.mcp.McpRegistry
 import com.mythara.memory.HeartbeatSyncer
+import com.mythara.sensors.SensorLearningScheduler
 import com.mythara.analytics.ContactAnalyticsScheduler
 import com.mythara.agent.SelfOrganizerScheduler
 import com.mythara.growth.GrowthScheduler
@@ -56,6 +57,7 @@ class MytharaApp : Application(), Configuration.Provider {
     @Inject lateinit var mediaStoreObserver: MediaStoreObserver
     @Inject lateinit var heartbeatSyncer: HeartbeatSyncer
     @Inject lateinit var mcpRegistry: McpRegistry
+    @Inject lateinit var sensorLearningScheduler: SensorLearningScheduler
 
     // App-scoped supervisor for fire-and-forget process-level
     // coroutines (settings-flow observers etc.). Cancelled implicitly
@@ -116,6 +118,11 @@ class MytharaApp : Application(), Configuration.Provider {
         // snapshot of every tool the configured MCP servers expose.
         // ToolRegistry merges these into its tool list on demand.
         mcpRegistry.start()
+        // Periodic sensor snapshot → LearningVault. Cluster-wide
+        // sensor pattern learning ("ambient light around 14:00 is
+        // usually 800 lux"), shipped via the existing semantic
+        // sync to peer devices.
+        sensorLearningScheduler.start()
         // Reflect the user's persistent-talk-notification preference
         // on every cold start (and follow live toggles while the
         // process is alive). Observing the Flow rather than reading

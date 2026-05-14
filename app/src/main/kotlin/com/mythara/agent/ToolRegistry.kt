@@ -74,6 +74,8 @@ class ToolRegistry @Inject constructor(
     sendNoteToDeviceTool: com.mythara.agent.tools.SendNoteToDeviceTool,
     createTaskTool: com.mythara.agent.tools.CreateTaskTool,
     teamCallTool: com.mythara.agent.tools.TeamCallTool,
+    readSensorsTool: com.mythara.agent.tools.ReadSensorsTool,
+    requestRemoteSensorsTool: com.mythara.agent.tools.RequestRemoteSensorsTool,
     private val mcpRegistry: com.mythara.mcp.McpRegistry,
     private val gate: ConfirmationGate,
     private val allowlist: com.mythara.data.AllowlistStore,
@@ -112,6 +114,8 @@ class ToolRegistry @Inject constructor(
         sendNoteToDeviceTool,
         createTaskTool,
         teamCallTool,
+        readSensorsTool,
+        requestRemoteSensorsTool,
     )
 
     /** Native + currently-known MCP tools, merged. Recomputed on every
