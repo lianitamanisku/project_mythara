@@ -127,6 +127,12 @@ def parse_args() -> argparse.Namespace:
         default=42,
         help="RNG seed for the node-graph mesh layout (default 42 — reproducible)",
     )
+    p.add_argument(
+        "--no-rose",
+        action="store_true",
+        help="skip the rose layer (used to bake static layers for the live "
+             "wallpaper, which draws an animated rose on top of this PNG)",
+    )
     return p.parse_args()
 
 
@@ -564,14 +570,16 @@ def main() -> None:
         # variant is in play.
         rose_bottom_y = cy + 30 * scale
         draw = ImageDraw.Draw(img)
-        render_rose(draw, cx, cy, scale)
+        if not args.no_rose:
+            render_rose(draw, cx, cy, scale)
         render_wordmark(draw, w, rose_bottom_y)
     else:
         # Original splash layout — wordmark hangs directly off the
         # rose's bottom edge, no silhouette.
         rose_bottom_y = cy + 30 * scale
         draw = ImageDraw.Draw(img)
-        render_rose(draw, cx, cy, scale)
+        if not args.no_rose:
+            render_rose(draw, cx, cy, scale)
         render_wordmark(draw, w, rose_bottom_y)
 
     args.out.parent.mkdir(parents=True, exist_ok=True)

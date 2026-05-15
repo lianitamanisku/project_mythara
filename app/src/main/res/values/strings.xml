@@ -3,4 +3,9 @@
     <string name="app_name">Mythara</string>
     <string name="tagline">Field intelligence in your pocket.</string>
     <string name="accessibility_service_description">Mythara reads what\'s on screen for the AI assistant and (when enabled in Automation mode) performs taps and swipes on your behalf. All processing is local; nothing is sent to the cloud unless you ask a chat question that needs it.</string>
+
+    <!-- Description shown next to the Mythara live wallpaper in the
+         system Live wallpapers picker. Kept short — the picker
+         truncates anything longer. -->
+    <string name="mythara_live_wallpaper_desc">Animated guardian — slow rose, breathing nucleus.</string>
 </resources>

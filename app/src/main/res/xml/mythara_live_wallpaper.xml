@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  WallpaperInfo for the Mythara live wallpaper. Surfaces the
+  wallpaper in the system "Live wallpapers" picker with a description
+  + a thumbnail (the same baked static-layers PNG, since it shows the
+  full composition minus the rotating rose — close enough for a
+  picker preview).
+
+  No `settingsActivity` declared — there's nothing to configure yet.
+  Future hook for a settings activity if we want user-tunable
+  rotation rate / breath rate / palette.
+-->
+<wallpaper xmlns:android="http://schemas.android.com/apk/res/android"
+    android:thumbnail="@drawable/wallpaper_static_layers"
+    android:description="@string/mythara_live_wallpaper_desc" />

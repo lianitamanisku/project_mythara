@@ -432,15 +432,38 @@
             </intent-filter>
         </receiver>
 
+        <!-- Mythara live wallpaper. Animates the geometric rose at
+             canvas-centre on top of a baked PNG of the static layers
+             (gradient + node-graph mesh + warrior silhouette + the
+             "MYTHARA 1.0" wordmark). Shown in the system "Live
+             wallpapers" picker; can also be applied directly via
+             ACTION_CHANGE_LIVE_WALLPAPER (see WallpaperApplyReceiver
+             `target=live`). BIND_WALLPAPER permission is system-
+             enforced — only the WallpaperManager binds it. -->
+        <service
+            android:name=".branding.MytharaLiveWallpaperService"
+            android:exported="true"
+            android:label="Mythara"
+            android:permission="android.permission.BIND_WALLPAPER">
+            <intent-filter>
+                <action android:name="android.service.wallpaper.WallpaperService" />
+            </intent-filter>
+            <meta-data
+                android:name="android.service.wallpaper"
+                android:resource="@xml/mythara_live_wallpaper" />
+        </service>
+
         <!-- Wallpaper applier — adb-triggerable bitmap-to-wallpaper
              handoff. Lets the operator set the Mythara branding image
              as home + lockscreen wallpaper without going through the
              system picker. Action `com.mythara.action.APPLY_WALLPAPER`
              with string extras `path` (filesystem path or content://
-             URI) and `target` (`home` / `lock` / `both`, default
-             `both`). See WallpaperApplyReceiver.kt for the exact adb
-             command. Exported so adb can reach it without launching
-             the app. -->
+             URI) and `target` (`home` / `lock` / `both` / `live`,
+             default `both`). The `live` target opens the system live-
+             wallpaper picker pre-loaded with our service so the user
+             taps "Set wallpaper" once. See WallpaperApplyReceiver.kt
+             for the exact adb command. Exported so adb can reach it
+             without launching the app. -->
         <receiver
             android:name=".services.WallpaperApplyReceiver"
             android:exported="true">
