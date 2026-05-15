@@ -1272,11 +1272,73 @@ class MemorySync @Inject constructor(
      */
     private fun mergerFor(path: String, manifest: ManifestV2): (String, String) -> String = when {
         path == "manifest.json" -> ::mergeManifests
+        path == "analytics/music_vocab.json" -> ::mergeMusicVocab
         path.startsWith("tasks/") && path.endsWith(".jsonl") -> ::mergeTaskJsonl
         path.startsWith("lifeline/") && path.endsWith(".jsonl") -> ::mergeLifelineJsonl
         path.startsWith("conversations/") && path.endsWith(".jsonl") -> ::mergeChatJsonl
         path.endsWith(".jsonl") -> ::mergeRecordJsonl
         else -> { _, local -> local }
+    }
+
+    /**
+     * Merge two `analytics/music_vocab.json` snapshots. The vocabulary
+     * is a `Map<token, Motif>` — for tokens present in both sides we
+     * keep the **earliest-minted** motif (lower `createdAt` wins),
+     * with hit/miss counts of the loser carried forward to the
+     * winner so the user's learning signal isn't lost. Same timestamp
+     * resolves by alphabetically-smaller motif signature so all
+     * devices converge identically without depending on which side
+     * was "local". Without this merger, a 409 concurrent-write retry
+     * would PUT the local snapshot verbatim and overwrite peer
+     * motifs the remote had already uploaded.
+     */
+    private fun mergeMusicVocab(remote: String, local: String): String {
+        val mapSerializer = kotlinx.serialization.builtins.MapSerializer(
+            String.serializer(),
+            com.mythara.music.Motif.serializer(),
+        )
+        val r = runCatching { manifestJson.decodeFromString(mapSerializer, remote) }
+            .getOrDefault(emptyMap())
+        val l = runCatching { manifestJson.decodeFromString(mapSerializer, local) }
+            .getOrDefault(emptyMap())
+        val merged = LinkedHashMap<String, com.mythara.music.Motif>(r.size + l.size)
+        merged.putAll(r)
+        for ((token, localMotif) in l) {
+            if (localMotif.notes.isEmpty()) continue
+            val remoteMotif = merged[token]
+            if (remoteMotif == null) {
+                merged[token] = localMotif
+                continue
+            }
+            // First-mint-wins; missing timestamp treated as ancient
+            // (Long.MAX_VALUE so any real timestamp beats it).
+            val lStamp = if (localMotif.createdAt > 0L) localMotif.createdAt else Long.MAX_VALUE
+            val rStamp = if (remoteMotif.createdAt > 0L) remoteMotif.createdAt else Long.MAX_VALUE
+            val winner: com.mythara.music.Motif = when {
+                lStamp < rStamp -> localMotif.copy(
+                    hits = localMotif.hits + remoteMotif.hits,
+                    misses = localMotif.misses + remoteMotif.misses,
+                )
+                rStamp < lStamp -> remoteMotif.copy(
+                    hits = remoteMotif.hits + localMotif.hits,
+                    misses = remoteMotif.misses + localMotif.misses,
+                )
+                else -> {
+                    // Same stamp — deterministic tiebreak on signature.
+                    val lSig = localMotif.notes.joinToString(",")
+                    val rSig = remoteMotif.notes.joinToString(",")
+                    if (lSig <= rSig) localMotif.copy(
+                        hits = localMotif.hits + remoteMotif.hits,
+                        misses = localMotif.misses + remoteMotif.misses,
+                    ) else remoteMotif.copy(
+                        hits = remoteMotif.hits + localMotif.hits,
+                        misses = remoteMotif.misses + localMotif.misses,
+                    )
+                }
+            }
+            merged[token] = winner
+        }
+        return manifestJson.encodeToString(mapSerializer, merged)
     }
 
     /**
