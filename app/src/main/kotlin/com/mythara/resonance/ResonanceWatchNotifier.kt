@@ -52,7 +52,12 @@ class ResonanceWatchNotifier @Inject constructor(
         val msgClient = Wearable.getMessageClient(ctx)
         nodeClient.connectedNodes
             .addOnSuccessListener { nodes ->
+                if (nodes.isEmpty()) {
+                    Log.w(TAG, "push $path=$payload — NO connected wear nodes")
+                    return@addOnSuccessListener
+                }
                 for (node in nodes) {
+                    Log.d(TAG, "push $path=$payload → ${node.displayName} (${node.id})")
                     msgClient.sendMessage(node.id, path, bytes)
                         .addOnFailureListener { e ->
                             Log.w(TAG, "send $path to ${node.displayName} failed: ${e.message}")

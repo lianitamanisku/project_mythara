@@ -101,8 +101,12 @@ class HeartRateService : Service(), SensorEventListener {
             Log.d(TAG, "streaming already active; skipping")
             return
         }
+        streamPushCount = 0
+        lastNoReadingLogMs = 0L
+        lastNoNodesLogMs = 0L
         applySensorRate(SensorManager.SENSOR_DELAY_UI)
-        Log.d(TAG, "resonance HR stream starting")
+        val sensor = sensorManager?.getDefaultSensor(Sensor.TYPE_HEART_RATE)
+        Log.d(TAG, "resonance HR stream starting (sensor=${sensor?.name ?: "NONE"}, latestBpm=$latestBpm)")
         streamJob = scope.launch {
             while (isActive) {
                 delay(STREAM_INTERVAL_MS)
@@ -131,16 +135,41 @@ class HeartRateService : Service(), SensorEventListener {
 
     private fun pushStreamSample() {
         val bpm = latestBpm
-        if (bpm !in VALID_BPM) return
+        if (bpm !in VALID_BPM) {
+            // Surface this every ~5s so a "no readings yet" condition
+            // is debuggable instead of silent.
+            val now = System.currentTimeMillis()
+            if (now - lastNoReadingLogMs > 5_000L) {
+                Log.d(TAG, "stream tick — no valid HR yet (latest=$bpm)")
+                lastNoReadingLogMs = now
+            }
+            return
+        }
+        streamPushCount++
+        if (streamPushCount % 10 == 1) {
+            Log.d(TAG, "streaming HR $bpm bpm (#$streamPushCount)")
+        }
         val payload = "$bpm|${System.currentTimeMillis()}".toByteArray(Charsets.UTF_8)
         val nodeClient = Wearable.getNodeClient(this)
         val msgClient = Wearable.getMessageClient(this)
         nodeClient.connectedNodes
             .addOnSuccessListener { nodes ->
+                if (nodes.isEmpty()) {
+                    val now = System.currentTimeMillis()
+                    if (now - lastNoNodesLogMs > 10_000L) {
+                        Log.w(TAG, "stream tick — NO connected phone nodes")
+                        lastNoNodesLogMs = now
+                    }
+                    return@addOnSuccessListener
+                }
                 for (node in nodes) msgClient.sendMessage(node.id, WearPaths.RESONANCE_HR, payload)
             }
             .addOnFailureListener { e -> Log.w(TAG, "stream HR push failed: ${e.message}") }
     }
+
+    @Volatile private var streamPushCount = 0
+    @Volatile private var lastNoReadingLogMs = 0L
+    @Volatile private var lastNoNodesLogMs = 0L
 
     override fun onSensorChanged(event: SensorEvent?) {
         val bpm = event?.values?.firstOrNull()?.toInt() ?: return

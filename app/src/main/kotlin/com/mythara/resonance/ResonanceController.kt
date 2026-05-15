@@ -67,6 +67,11 @@ class ResonanceController @Inject constructor(
      *  blocking on the DataStore. */
     @Volatile private var enabledCached: Boolean = false
 
+    /** Diagnostic counters — keep the HR stream visible in logcat
+     *  without firehosing every sample. */
+    @Volatile private var hrPushCount: Int = 0
+    @Volatile private var lastStrayHrLogMs: Long = 0L
+
     /** Active session, or null when no Resonance session is open. */
     private val _session = MutableStateFlow<ResonanceSession?>(null)
     val session: StateFlow<ResonanceSession?> = _session.asStateFlow()
@@ -78,7 +83,9 @@ class ResonanceController @Inject constructor(
         // Also: if the user disables the feature mid-session, hard
         // stop whatever's running.
         scope.launch {
+            Log.d(TAG, "controller init — collecting settings.enabledFlow()")
             settings.enabledFlow().collect { enabled ->
+                Log.d(TAG, "settings.enabled = $enabled (was cached=$enabledCached)")
                 enabledCached = enabled
                 watchNotifier.pushAvailability(enabled)
                 if (!enabled && _session.value != null) {
@@ -153,8 +160,23 @@ class ResonanceController @Inject constructor(
         val parts = s.split('|')
         val bpm = parts.getOrNull(0)?.toIntOrNull() ?: return
         val ts = parts.getOrNull(1)?.toLongOrNull() ?: System.currentTimeMillis()
-        if (_session.value == null) return
+        if (_session.value == null) {
+            // Log once every ~15 stray samples so we can spot a watch
+            // that's streaming when the phone has no session open.
+            val now = System.currentTimeMillis()
+            if (now - lastStrayHrLogMs > 15_000L) {
+                Log.d(TAG, "HR sample $bpm bpm ARRIVED but no session open — dropping")
+                lastStrayHrLogMs = now
+            }
+            return
+        }
         hrStore.push(bpm, ts)
+        // Log every ~10 samples so the stream is visible in logcat
+        // without being a firehose.
+        hrPushCount++
+        if (hrPushCount % 10 == 1) {
+            Log.d(TAG, "HR stream: $bpm bpm (sample #$hrPushCount this session)")
+        }
     }
 
     /** Watch's discreet `on` / `off` toggle. */
@@ -241,6 +263,7 @@ class ResonanceController @Inject constructor(
         val s = ResonanceSession()
         s.setTarget(protocol)
         _session.value = s
+        hrPushCount = 0
         hrStore.start()
         Log.d(TAG, "session started (target=${protocol?.displayName ?: "auto"})")
         // Hand the audio + closed loop off to the FGS; it owns
