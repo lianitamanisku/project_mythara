@@ -147,11 +147,38 @@ class MusicToneEngine @Inject constructor() {
         val attackSamples = (sampleRate * ATTACK_MS / 1000).coerceAtMost(totalSamples / 2)
         val releaseSamples = (sampleRate * RELEASE_MS / 1000).coerceAtMost(totalSamples / 2)
         val sustainSamples = (totalSamples - attackSamples - releaseSamples).coerceAtLeast(0)
-        val omega = 2.0 * PI * freqHz / sampleRate.toDouble()
+
+        // Layer the fundamental with its first three harmonics —
+        // amplitude decays as 1/n so the spectrum matches a vocal /
+        // organ-pipe stack rather than a pure sine. This is what gives
+        // OM its deep, "ahhhmmm" body instead of the thin tone you'd
+        // get from a single sine. Harmonics above NYQUIST_GUARD are
+        // dropped so high motif notes don't alias.
+        val harmonicGains = floatArrayOf(1.0f, 0.55f, 0.33f, 0.22f)
+        val activeOmegas = ArrayList<Double>(harmonicGains.size)
+        val activeGains = ArrayList<Float>(harmonicGains.size)
+        var gainSum = 0f
+        for ((idx, g) in harmonicGains.withIndex()) {
+            val hz = freqHz * (idx + 1)
+            if (hz > NYQUIST_GUARD_HZ) break
+            activeOmegas.add(2.0 * PI * hz / sampleRate.toDouble())
+            activeGains.add(g)
+            gainSum += g
+        }
+        // Normalise so peak amplitude stays bounded regardless of how
+        // many harmonics we stacked, then drop master to leave headroom
+        // for the tremolo modulation below.
+        val masterGain = (VOLUME / gainSum) * (1f / (1f + TREMOLO_DEPTH))
+        val phases = DoubleArray(activeOmegas.size)
+
+        // Slow amplitude modulation — 5 Hz, ~14 % depth — gives the
+        // sustained "om-ing" pulse you hear in real chants. Without it
+        // the layered harmonics still feel synthetic.
+        val tremoloOmega = 2.0 * PI * TREMOLO_RATE_HZ / sampleRate.toDouble()
+        var tremoloPhase = 0.0
 
         val chunk = ShortArray(CHUNK_SAMPLES)
         var i = 0
-        var phase = 0.0
         while (i < totalSamples) {
             val n = minOf(CHUNK_SAMPLES, totalSamples - i)
             for (j in 0 until n) {
@@ -167,10 +194,19 @@ class MusicToneEngine @Inject constructor() {
                         0.5f * (1f + cos(PI.toFloat() * r / releaseSamples))
                     }
                 }
-                val sample = (sin(phase) * envelope * VOLUME * Short.MAX_VALUE).toInt()
+                // Sum harmonic contributions for this sample.
+                var harmonicSum = 0.0
+                for (h in activeOmegas.indices) {
+                    harmonicSum += activeGains[h] * sin(phases[h])
+                    phases[h] += activeOmegas[h]
+                    if (phases[h] > 2 * PI) phases[h] -= 2 * PI
+                }
+                val tremolo = 1.0 + TREMOLO_DEPTH * sin(tremoloPhase)
+                tremoloPhase += tremoloOmega
+                if (tremoloPhase > 2 * PI) tremoloPhase -= 2 * PI
+
+                val sample = (harmonicSum * tremolo * masterGain * envelope * Short.MAX_VALUE).toInt()
                 chunk[j] = sample.coerceIn(Short.MIN_VALUE.toInt(), Short.MAX_VALUE.toInt()).toShort()
-                phase += omega
-                if (phase > 2 * PI) phase -= 2 * PI
             }
             t.write(chunk, 0, n)
             i += n
@@ -200,14 +236,14 @@ class MusicToneEngine @Inject constructor() {
         const val SAMPLE_RATE = 44_100
         private const val CHUNK_SAMPLES = 1024
 
-        /** Per-note duration. Slightly longer than the original 180 ms
-         *  so single-tone caveman words have presence and the user
-         *  has time to hear + see the colour-glow association. */
-        const val NOTE_DURATION_MS = 240
+        /** Per-note duration. Long enough for the layered-harmonic
+         *  spectrum + tremolo to settle into a recognisable OM "ahhhh"
+         *  rather than feel like a clipped beep. */
+        const val NOTE_DURATION_MS = 380
 
         /** Silence between consecutive notes within a single motif —
-         *  short, so each motif feels like one phrase. */
-        const val INTRA_NOTE_GAP_MS = 50
+         *  short, so each motif feels like one continuous phrase. */
+        const val INTRA_NOTE_GAP_MS = 60
 
         /** Silence between motifs — long, so each word's tone phrase
          *  lands distinctly and the user can mentally map "this tone =
@@ -215,10 +251,11 @@ class MusicToneEngine @Inject constructor() {
          *  the chat bubble updates inside this gap. */
         const val INTER_MOTIF_GAP_MS = 500
 
-        /** Raised-cosine envelope window. 12 ms is long enough that
-         *  there are no audible clicks at note edges. */
-        private const val ATTACK_MS = 12
-        private const val RELEASE_MS = 12
+        /** Raised-cosine attack/release windows. Attack stays short so
+         *  the tone arrives confidently; release is long so each note
+         *  fades like a chant — the OM "mmm" tail. */
+        private const val ATTACK_MS = 20
+        private const val RELEASE_MS = 110
 
         /** Pitch band wide enough to include the OM fundamental
          *  (136.1 Hz) at the bottom and the 9th harmonic (1224.9 Hz)
@@ -228,9 +265,23 @@ class MusicToneEngine @Inject constructor() {
         private const val MIN_HZ = 130f
         private const val MAX_HZ = 1500f
 
+        /** Tremolo (slow amplitude modulation) parameters. ~5 Hz at
+         *  ~14 % depth approximates the natural "om-om-om" pulse of
+         *  a sustained chant. */
+        private const val TREMOLO_RATE_HZ = 5.0
+        private const val TREMOLO_DEPTH = 0.14
+
+        /** Cap on the highest harmonic frequency we synthesise — drop
+         *  any overtone above this so high motif notes don't alias
+         *  into ugly artefacts above the human-pleasant band. */
+        private const val NYQUIST_GUARD_HZ = 5000f
+
         /** Output volume cap. Music Mode runs as USAGE_ASSISTANCE_
          *  SONIFICATION which routes to the notification stream; we
-         *  still scale the sine to keep it polite. */
-        private const val VOLUME = 0.45f
+         *  still scale the synth to keep it polite. The render path
+         *  divides this by the harmonic-stack gain sum so the peak
+         *  amplitude stays bounded regardless of how many overtones
+         *  layer in. */
+        private const val VOLUME = 0.55f
     }
 }
