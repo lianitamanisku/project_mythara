@@ -169,14 +169,20 @@ class ResonanceHcHrPoller @Inject constructor(
          *  that a fresh batch lands in the analyzer's next 30 s pass. */
         private const val POLL_INTERVAL_MS = 10_000L
 
-        /** First poll looks ~2 min back so we catch a batch Samsung
-         *  Health may have written just before the session opened. */
-        private const val INITIAL_LOOKBACK_MS = 120_000L
+        /** First poll looks ~30 min back. Fitbit / Samsung Health
+         *  flush HR to Health Connect on multi-minute batches, and
+         *  the most recent batch can easily be 5–15 min old when a
+         *  session opens. A wider initial sweep guarantees we pick
+         *  up that batch on the very first poll instead of waiting
+         *  out the next one. After the first poll, dedupe via
+         *  lastPushedTsMs naturally narrows subsequent windows. */
+        private const val INITIAL_LOOKBACK_MS = 30L * 60 * 1000
 
-        /** Per-poll lookback ceiling — never read more than 5 min of
-         *  history at once, even if `lastPushedTsMs` is unusually old
-         *  (e.g. session paused / device slept). */
-        private const val MAX_LOOKBACK_MS = 5L * 60 * 1000
+        /** Per-poll lookback ceiling. Same reasoning — Fitbit and
+         *  Samsung Health both batch with multi-minute latency, so
+         *  a 30 min ceiling keeps us safely ahead of their write
+         *  cadence even when the device dozed briefly. */
+        private const val MAX_LOOKBACK_MS = 30L * 60 * 1000
 
         /** Small overlap on the read window so a sample that arrived
          *  out-of-order doesn't slip through the dedupe. */

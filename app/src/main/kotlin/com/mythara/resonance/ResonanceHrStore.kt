@@ -126,11 +126,23 @@ class ResonanceHrStore @Inject constructor(
         /** Most recent ~5 min of samples at 1Hz fits comfortably. */
         private const val BUFFER_CAP = 320
 
-        /** Default analyzer window: average HR over the last 30s. */
-        const val ANALYSIS_WINDOW_MS = 30_000L
+        /** Default analyzer window: average HR over the last 5 min.
+         *  Originally 30 s when we expected a 1 Hz live stream from
+         *  the watch. Now that the live HR source is the
+         *  Health-Connect poller (Fitbit / Samsung Health batches
+         *  arriving every 1–2 min), a 30 s window misses every
+         *  sample whose timestamp is older than the last batch
+         *  arrival. 5 min is wide enough to cover several batches
+         *  while still being short enough that a stale session
+         *  doesn't drag in irrelevant historical data. */
+        const val ANALYSIS_WINDOW_MS = 5L * 60 * 1000
 
-        /** A sample older than this is considered stale (watch BT drop). */
-        const val STALE_AFTER_MS = 30_000L
+        /** A sample older than this is considered stale (HR source
+         *  dropped — watch disconnect, Fitbit / Samsung Health write
+         *  pipeline failed). Same rationale as
+         *  [ANALYSIS_WINDOW_MS]: needs to span Fitbit / Samsung Health
+         *  batch latency, not 1 Hz live cadence. */
+        const val STALE_AFTER_MS = 5L * 60 * 1000
 
         /** One vault row per ~60s of streamed HR — matches the
          *  granularity HealthLearningWorker already writes. */
