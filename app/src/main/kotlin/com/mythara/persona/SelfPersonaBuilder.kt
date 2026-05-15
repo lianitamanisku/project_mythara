@@ -31,6 +31,9 @@ import javax.inject.Singleton
  *    ([PersonaBuilder]) AND the Gemma-extracted traits lifted from the
  *    user's own outgoing messages in imported WhatsApp / SMS history
  *    ([com.mythara.imports.MessagePersonaExtractor]).
+ *  - the user's own hand-written notes from the hidden Notes screen
+ *    (general memories + quick notes) — first-person signal the user
+ *    typed directly, so it's weighted in like persona traits.
  *  - the long-range health history + recent 24h snapshot — so the read
  *    is grounded in health metrics too, with insights that factor them
  *    in (sleep, resting-HR trend, activity level).
@@ -94,11 +97,16 @@ class SelfPersonaBuilder @Inject constructor(
             }
         }
 
-        // User-level persona facts — excludes contact-scoped rows.
+        // User-level evidence — persona-trait rows PLUS the user's own
+        // hand-written notes from the hidden Notes screen (general
+        // memories + quick notes; `src:user-note`). Both are first-person
+        // signal about the user. Contact-scoped rows are excluded — a
+        // note filed against a person is about THEM, not the user.
         val personaFacts = semantic
             .filter { e ->
                 val f = vault.decodeFacets(e)
-                "kind:persona" in f && f.none { it.startsWith("contact:") }
+                ("kind:persona" in f || "src:user-note" in f) &&
+                    f.none { it.startsWith("contact:") }
             }
             .sortedByDescending { it.tsMillis }
             .map { it.content.trim() }

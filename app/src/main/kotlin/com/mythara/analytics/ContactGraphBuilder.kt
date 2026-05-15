@@ -16,11 +16,19 @@ import kotlin.math.abs
 import kotlin.math.sqrt
 
 /**
- * Derives a relationship graph over the user's contacts for the
- * Insights screen. Three kinds of edge, exactly as the user framed it
- * — "based on traits, similarities or just knowing each other":
+ * Derives a relationship graph for the Insights screen.
  *
- *  - [EdgeKind.KNOWS]        — people who actually know each other,
+ * The graph is EGO-CENTRIC: there's a single [ME_KEY] node at its
+ * centre and every contact hangs off it — because that's exactly how
+ * it is, every contact IS connected to the user. Four kinds of edge:
+ *
+ *  - [EdgeKind.RELATES]      — ME → each contact. The label is the
+ *                              relationship TYPE with the user
+ *                              ("friend", "family", "colleague",
+ *                              "transactional", …). A cheap heuristic
+ *                              label is shown instantly; the Gemma
+ *                              pass refines it from the user's notes.
+ *  - [EdgeKind.KNOWS]        — contacts who actually know each other,
  *                              inferred by the local Gemma model from
  *                              the user's notes + relationship
  *                              summaries (one batched call).
@@ -29,10 +37,11 @@ import kotlin.math.sqrt
  *  - [EdgeKind.SHARED_TOPIC] — overlapping conversation topics. Pure
  *                              set arithmetic.
  *
- * [buildCheap] returns nodes + the two arithmetic edge kinds instantly.
- * [buildFull] additionally runs the single Gemma pass for KNOWS edges —
- * slower (model load + one inference) so the UI shows the cheap graph
- * first and folds the KNOWS edges in when they arrive.
+ * [buildCheap] returns the ME node + every contact + RELATES edges
+ * (heuristic labels) + the two arithmetic edge kinds, instantly.
+ * [buildFull] additionally runs Gemma to refine the RELATES labels and
+ * add the KNOWS edges — slower (model load + inference) so the UI
+ * shows the cheap graph first and folds the rest in when it arrives.
  */
 @Singleton
 class ContactGraphBuilder @Inject constructor(
@@ -41,7 +50,7 @@ class ContactGraphBuilder @Inject constructor(
 ) {
     private val json = Json { ignoreUnknownKeys = true; isLenient = true }
 
-    enum class EdgeKind { KNOWS, SIMILAR, SHARED_TOPIC }
+    enum class EdgeKind { RELATES, KNOWS, SIMILAR, SHARED_TOPIC }
 
     data class Node(
         val key: String,
@@ -71,23 +80,35 @@ class ContactGraphBuilder @Inject constructor(
         val gemmaUsed: Boolean,
     )
 
-    /** Nodes + the two arithmetic edge kinds. Instant — no model. */
+    /** The ME node + every contact + heuristic RELATES edges + the two
+     *  arithmetic edge kinds. Instant — no model. */
     suspend fun buildCheap(): Graph = withContext(Dispatchers.IO) {
         val profiles = runCatching { repo.dao.listAll() }.getOrDefault(emptyList())
-        val nodes = profiles.map { it.toNode() }
-        Graph(nodes, similarEdges(profiles) + sharedTopicEdges(profiles), gemmaUsed = false)
+        val nodes = listOf(meNode()) + profiles.map { it.toNode() }
+        val edges = relatesEdges(profiles, refined = emptyMap()) +
+            similarEdges(profiles) + sharedTopicEdges(profiles)
+        Graph(nodes, edges, gemmaUsed = false)
     }
 
-    /** Cheap graph + the Gemma-derived KNOWS edges (one batched call). */
+    /** Cheap graph + Gemma-refined RELATES labels + the KNOWS edges
+     *  (two batched calls). */
     suspend fun buildFull(): Graph = withContext(Dispatchers.IO) {
         val profiles = runCatching { repo.dao.listAll() }.getOrDefault(emptyList())
-        val nodes = profiles.map { it.toNode() }
+        val nodes = listOf(meNode()) + profiles.map { it.toNode() }
         val arithmetic = similarEdges(profiles) + sharedTopicEdges(profiles)
+        val refined = runCatching { relatesLabels(profiles) }.getOrElse {
+            Log.w(TAG, "relates-label inference failed: ${it.message}")
+            emptyMap()
+        }
         val knows = runCatching { knowsEdges(profiles) }.getOrElse {
             Log.w(TAG, "knows-edge inference failed: ${it.message}")
             emptyList()
         }
-        Graph(nodes, arithmetic + knows, gemmaUsed = gemma.isReady())
+        Graph(
+            nodes,
+            relatesEdges(profiles, refined) + arithmetic + knows,
+            gemmaUsed = gemma.isReady(),
+        )
     }
 
     // ----------------------------------------------------------- nodes
@@ -102,6 +123,121 @@ class ContactGraphBuilder @Inject constructor(
         summary = relationshipSummary,
         photoUri = photoUri,
     )
+
+    /** The synthetic "you" node at the centre of the ego graph. Sized
+     *  big (max message count) so it always reads as the hub. */
+    private fun meNode() = Node(
+        key = ME_KEY,
+        name = "Me",
+        isFavorite = true,
+        messageCount = 999,
+        topics = emptyList(),
+        hasNotes = false,
+        summary = "You — every contact connects back here.",
+        photoUri = null,
+    )
+
+    // ------------------------------------------------------- ego edges
+
+    /**
+     * One RELATES edge ME → every contact. [refined] (when non-empty)
+     * supplies the Gemma-classified relationship type; contacts without
+     * a refined label fall back to the cheap heuristic.
+     */
+    private fun relatesEdges(
+        profiles: List<ContactProfileRow>,
+        refined: Map<String, String>,
+    ): List<Edge> = profiles.map { p ->
+        Edge(
+            fromKey = ME_KEY,
+            toKey = p.nameKey,
+            kind = EdgeKind.RELATES,
+            weight = relatesWeight(p),
+            label = refined[p.nameKey] ?: cheapRelationLabel(p),
+        )
+    }
+
+    /** Instant heuristic relationship type — refined later by Gemma. */
+    private fun cheapRelationLabel(p: ContactProfileRow): String = when {
+        !ContactClassifier.isPersonal(p.displayName, p.phone) -> "transactional"
+        p.isFavorite -> "close contact"
+        !p.userNotes.isNullOrBlank() -> "known"
+        p.messageCount > 20 -> "regular contact"
+        else -> "contact"
+    }
+
+    /** Edge weight → line thickness/opacity. Favorites + people the
+     *  user wrote notes about read as the strongest ties. */
+    private fun relatesWeight(p: ContactProfileRow): Float = when {
+        p.isFavorite -> 1f
+        !p.userNotes.isNullOrBlank() -> 0.8f
+        p.messageCount > 20 -> 0.6f
+        else -> 0.4f
+    }
+
+    /**
+     * One batched Gemma call: hand it every contact that has notes or a
+     * relationship summary and ask for a short relationship-type label
+     * for how each relates TO THE USER. The notes are the primary
+     * signal. Returns nameKey → label; contacts not covered keep the
+     * cheap heuristic label.
+     */
+    private suspend fun relatesLabels(profiles: List<ContactProfileRow>): Map<String, String> {
+        if (!gemma.isReady()) return emptyMap()
+        val candidates = profiles
+            .filter { !it.userNotes.isNullOrBlank() || !it.relationshipSummary.isNullOrBlank() }
+            .sortedWith(
+                compareByDescending<ContactProfileRow> { !it.userNotes.isNullOrBlank() }
+                    .thenByDescending { it.isFavorite }
+                    .thenByDescending { it.messageCount },
+            )
+            .take(MAX_GEMMA_CANDIDATES)
+        if (candidates.isEmpty()) return emptyMap()
+
+        val keyByName = candidates.associate { it.displayName.trim().lowercase() to it.nameKey }
+        val prompt = buildString {
+            append(
+                "Below are people the USER knows. For each, the user's own NOTES and a relationship " +
+                    "SUMMARY are given. Classify how each person relates TO THE USER with ONE short " +
+                    "lowercase label — e.g. friend, close friend, family, partner, colleague, manager, " +
+                    "client, mentor, acquaintance, transactional. Base it on the NOTES first (the " +
+                    "user's authoritative statements), then the summary.\n\n",
+            )
+            candidates.forEachIndexed { i, c ->
+                append("${i + 1}. ${c.displayName}\n")
+                c.userNotes?.takeIf { it.isNotBlank() }?.let {
+                    append("   notes: ").append(it.trim().take(240)).append('\n')
+                }
+                c.relationshipSummary?.takeIf { it.isNotBlank() }?.let {
+                    append("   summary: ").append(it.trim().take(240)).append('\n')
+                }
+            }
+            append(
+                "\nReturn ONLY a JSON array of objects, each: " +
+                    "{\"name\": \"<name>\", \"relationship\": \"<short label>\"}. " +
+                    "Use the names EXACTLY as written above. No prose, no markdown.\n\n" +
+                    "Return the JSON array now.",
+            )
+        }
+
+        val raw = runCatching { gemma.runRaw(prompt, maxLen = KNOWS_MAX_LEN) }.getOrNull()
+            ?: return emptyMap()
+        val arrText = extractFirstJsonArray(raw) ?: return emptyMap()
+        val arr = runCatching { json.parseToJsonElement(arrText) as? JsonArray }.getOrNull()
+            ?: return emptyMap()
+
+        val out = HashMap<String, String>()
+        for (el in arr) {
+            val o = el as? JsonObject ?: continue
+            val name = (o["name"] as? JsonPrimitive)?.content?.trim()?.lowercase() ?: continue
+            val rel = (o["relationship"] as? JsonPrimitive)?.content?.trim()
+                ?.takeIf { it.isNotBlank() } ?: continue
+            val key = keyByName[name] ?: continue
+            out[key] = rel.take(28)
+        }
+        Log.d(TAG, "relates-labels: ${out.size} from ${candidates.size} candidates")
+        return out
+    }
 
     // ------------------------------------------------------- arithmetic
 
@@ -277,6 +413,10 @@ class ContactGraphBuilder @Inject constructor(
 
     companion object {
         private const val TAG = "Mythara/ContactGraph"
+
+        /** Key of the synthetic "you" node at the centre of the ego graph. */
+        const val ME_KEY = "__me__"
+
         private const val SIMILAR_MAX_DIFF = 0.14
         private const val MIN_SHARED_TOPICS = 3
         private const val MAX_GEMMA_CANDIDATES = 40

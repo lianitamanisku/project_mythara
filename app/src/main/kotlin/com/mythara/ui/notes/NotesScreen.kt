@@ -48,6 +48,7 @@ import com.mythara.analytics.ContactProfileRepository
 import com.mythara.analytics.ContactProfileRow
 import com.mythara.memory.HeartbeatSyncer
 import com.mythara.memory.Tier
+import com.mythara.persona.SelfPersonaBuilder
 import com.mythara.secret.observe.embed.EmbeddingsModelStore
 import com.mythara.secret.observe.embed.LocalEmbedder
 import com.mythara.secret.observe.vault.LearningVault
@@ -88,6 +89,7 @@ class NotesViewModel @Inject constructor(
     private val embedder: LocalEmbedder,
     private val contactRepo: ContactProfileRepository,
     private val analyticsBuilder: ContactAnalyticsBuilder,
+    private val selfPersonaBuilder: SelfPersonaBuilder,
     /** dagger.Lazy — HeartbeatSyncer transitively pulls in the agent stack. */
     private val heartbeat: dagger.Lazy<HeartbeatSyncer>,
 ) : ViewModel() {
@@ -157,6 +159,12 @@ class NotesViewModel @Inject constructor(
             _ui.value = _ui.value.copy(saving = false, lastResult = result)
             reloadRecent()
             runCatching { heartbeat.get().fireNow() }
+            // The note is durably in the vault now — force a self-persona
+            // rebuild so the About Me Big Five (and the connected-people
+            // ranking it feeds) reflect it immediately, rather than
+            // waiting for the daily worker. force=true bypasses the 20h
+            // freshness gate; the rebuild self-serialises on its own lock.
+            runCatching { selfPersonaBuilder.rebuild(force = true) }
         }
     }
 
@@ -184,7 +192,7 @@ class NotesViewModel @Inject constructor(
                         conf = 1.0,
                     )
                 }
-                "Saved as a general memory — Lumi will recall it."
+                "Saved as a general memory — Lumi will recall it, and your About Me profile is rebuilding."
             }
             NoteMode.Note -> {
                 runCatching {
@@ -198,7 +206,7 @@ class NotesViewModel @Inject constructor(
                         conf = 0.9,
                     )
                 }
-                "Note saved."
+                "Note saved — your About Me profile is rebuilding."
             }
             NoteMode.Person -> {
                 if (contact == null) return "Pick a person first."

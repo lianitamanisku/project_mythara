@@ -67,16 +67,19 @@ import kotlin.math.sqrt
 import kotlin.random.Random
 
 /**
- * Insights — a force-directed relationship graph over the user's
- * contacts. Each node is a person; each edge a derived relationship:
+ * Insights — a force-directed, EGO-CENTRIC relationship graph. The
+ * "you" node sits pinned at the centre and every contact hangs off it;
+ * extra edges layer in the structure between contacts:
+ *  - Malibu  : RELATES (you → contact; label = relationship type)
  *  - Charple : KNOWS (Gemma-inferred from the user's notes + summaries)
  *  - Bok     : SIMILAR (close Big Five personalities)
  *  - Mustard : SHARED_TOPIC (overlapping conversation topics)
  *
  * The canvas pans (drag) and zooms (pinch); tapping a node opens a
  * detail panel listing that person's relationships. The cheap
- * (arithmetic) edges render instantly; the Gemma KNOWS pass folds in
- * a moment later.
+ * (arithmetic) edges + heuristic RELATES labels render instantly; the
+ * Gemma pass refines the RELATES labels and folds in KNOWS a moment
+ * later.
  */
 @HiltViewModel
 class InsightsViewModel @Inject constructor(
@@ -130,12 +133,13 @@ class InsightsViewModel @Inject constructor(
     }
 
     /** Keep the graph snappy: cap to the most-relevant nodes, drop
-     *  edges that reference a culled node. */
+     *  edges that reference a culled node. The ME hub is always kept. */
     private fun cap(g: ContactGraphBuilder.Graph): ContactGraphBuilder.Graph {
         if (g.nodes.size <= MAX_NODES) return g
         val kept = g.nodes
             .sortedWith(
-                compareByDescending<ContactGraphBuilder.Node> { it.isFavorite }
+                compareByDescending<ContactGraphBuilder.Node> { it.key == ContactGraphBuilder.ME_KEY }
+                    .thenByDescending { it.isFavorite }
                     .thenByDescending { it.messageCount },
             )
             .take(MAX_NODES)
@@ -177,6 +181,11 @@ class InsightsViewModel @Inject constructor(
             val rad = 0.05f + rnd.nextFloat() * 0.4f
             pos[key] = Offset(0.5f + rad * cos(ang), 0.5f + rad * sin(ang))
         }
+        // The ego-graph hub is pinned dead-centre and never moves — it
+        // still exerts spring + repulsion forces on the contacts, it
+        // just isn't displaced by them.
+        val me = ContactGraphBuilder.ME_KEY
+        if (me in pos) pos[me] = Offset(0.5f, 0.5f)
         // Unordered edge pairs (collapse multi-kind edges to one spring).
         val springs = g.edges.map {
             if (it.fromKey <= it.toKey) it.fromKey to it.toKey else it.toKey to it.fromKey
@@ -202,10 +211,18 @@ class InsightsViewModel @Inject constructor(
                         delta = Offset(rnd.nextFloat() - 0.5f, rnd.nextFloat() - 0.5f)
                         dist = delta.getDistance().coerceAtLeast(1e-4f)
                     }
-                    val push = (minSep - dist) / 2f
                     val dir = delta / dist
-                    pos[a] = pos[a]!! + dir * push
-                    pos[b] = pos[b]!! - dir * push
+                    // ME is pinned — push the full separation onto the
+                    // other node rather than splitting it.
+                    when (me) {
+                        a -> pos[b] = pos[b]!! - dir * (minSep - dist)
+                        b -> pos[a] = pos[a]!! + dir * (minSep - dist)
+                        else -> {
+                            val push = (minSep - dist) / 2f
+                            pos[a] = pos[a]!! + dir * push
+                            pos[b] = pos[b]!! - dir * push
+                        }
+                    }
                 }
             }
         }
@@ -241,6 +258,7 @@ class InsightsViewModel @Inject constructor(
             }
             val temp = (1f - progress) * 0.14f + 0.004f
             for (key in keys) {
+                if (key == me) continue // pinned hub
                 val d = disp[key]!!
                 val len = d.getDistance().coerceAtLeast(1e-4f)
                 pos[key] = pos[key]!! + d / len * minOf(len, temp)
@@ -266,6 +284,8 @@ class InsightsViewModel @Inject constructor(
                 )
             }
         }
+        // Normalisation shifted the hub off-centre — snap it back.
+        if (me in pos) pos[me] = Offset(0.5f, 0.5f)
         // THEN run pure separation to convergence, in the final
         // coordinate space, clamping back into the box each sweep. This
         // is the pass that actually guarantees no two nodes overlap on
@@ -382,7 +402,7 @@ fun InsightsScreen(
                                         val n = ui.positions[node.key] ?: continue
                                         val p = Offset(n.x * w, n.y * h) * zoom + pan
                                         val d = (p - tap).getDistance()
-                                        val r = nodeRadius(node.messageCount) * zoom + 14f
+                                        val r = node.baseRadius() * zoom + 14f
                                         if (d < r && d < bestDist) {
                                             bestDist = d
                                             best = node.key
@@ -424,17 +444,24 @@ fun InsightsScreen(
                         for (node in ui.graph.nodes) {
                             val n = ui.positions[node.key] ?: continue
                             val p = screen(n)
-                            val r = nodeRadius(node.messageCount) * zoom
+                            val r = node.baseRadius() * zoom
+                            val isMe = node.key == ContactGraphBuilder.ME_KEY
                             val isSel = node.key == sel
-                            val dim = sel != null && !isSel &&
+                            val dim = sel != null && !isSel && !isMe &&
                                 ui.graph.edges.none {
                                     (it.fromKey == sel && it.toKey == node.key) ||
                                         (it.toKey == sel && it.fromKey == node.key)
                                 }
-                            val fill = (if (node.isFavorite) MytharaColors.Charple else MytharaColors.SurfaceHigh)
-                                .copy(alpha = if (dim) 0.3f else 1f)
+                            val fill = when {
+                                isMe -> MytharaColors.Malibu
+                                node.isFavorite -> MytharaColors.Charple
+                                else -> MytharaColors.SurfaceHigh
+                            }.copy(alpha = if (dim) 0.3f else 1f)
                             drawCircle(MytharaColors.Bg, r + 3f * zoom, p)
                             drawCircle(fill, r, p)
+                            if (isMe) {
+                                drawCircle(MytharaColors.Fg, r, p, style = Stroke(2f * zoom))
+                            }
                             if (node.hasNotes) {
                                 drawCircle(MytharaColors.Bok, r, p, style = Stroke(1.5f * zoom))
                             }
@@ -481,13 +508,19 @@ private const val NODE_GROW = 15f
 private fun nodeRadius(messageCount: Int): Float =
     NODE_MIN_R + (messageCount.coerceAtMost(50) / 50f) * NODE_GROW
 
+/** Un-zoomed draw radius — the ME hub is drawn larger than any contact. */
+private fun ContactGraphBuilder.Node.baseRadius(): Float =
+    nodeRadius(messageCount) * (if (key == ContactGraphBuilder.ME_KEY) 1.7f else 1f)
+
 private fun edgeColor(kind: ContactGraphBuilder.EdgeKind): Color = when (kind) {
+    ContactGraphBuilder.EdgeKind.RELATES -> MytharaColors.Malibu
     ContactGraphBuilder.EdgeKind.KNOWS -> MytharaColors.Charple
     ContactGraphBuilder.EdgeKind.SIMILAR -> MytharaColors.Bok
     ContactGraphBuilder.EdgeKind.SHARED_TOPIC -> MytharaColors.Mustard
 }
 
 private fun edgeKindLabel(kind: ContactGraphBuilder.EdgeKind): String = when (kind) {
+    ContactGraphBuilder.EdgeKind.RELATES -> "relationship"
     ContactGraphBuilder.EdgeKind.KNOWS -> "knows"
     ContactGraphBuilder.EdgeKind.SIMILAR -> "similar"
     ContactGraphBuilder.EdgeKind.SHARED_TOPIC -> "shared topics"
@@ -499,12 +532,13 @@ private fun Legend() {
         modifier = Modifier
             .fillMaxWidth()
             .padding(horizontal = 14.dp, vertical = 2.dp),
-        horizontalArrangement = Arrangement.spacedBy(14.dp),
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
+        LegendDot(MytharaColors.Malibu, "relationship")
         LegendDot(MytharaColors.Charple, "knows")
         LegendDot(MytharaColors.Bok, "similar")
-        LegendDot(MytharaColors.Mustard, "shared topics")
+        LegendDot(MytharaColors.Mustard, "topics")
     }
 }
 
@@ -529,6 +563,7 @@ private fun NodeDetailPanel(
     nameOf: (String) -> String,
     onClose: () -> Unit,
 ) {
+    val isMe = node.key == ContactGraphBuilder.ME_KEY
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -536,7 +571,7 @@ private fun NodeDetailPanel(
             .padding(12.dp)
             .clip(RoundedCornerShape(12.dp))
             .background(MytharaColors.Surface)
-            .border(1.dp, MytharaColors.Charple, RoundedCornerShape(12.dp))
+            .border(1.dp, if (isMe) MytharaColors.Malibu else MytharaColors.Charple, RoundedCornerShape(12.dp))
             .padding(14.dp)
             .verticalScroll(rememberScrollState()),
     ) {
@@ -565,8 +600,12 @@ private fun NodeDetailPanel(
         }
 
         Text(
-            text = "${node.messageCount} interactions" +
-                (if (node.topics.isNotEmpty()) " · ${node.topics.take(4).joinToString(", ")}" else ""),
+            text = if (isMe) {
+                "${edges.size} connections"
+            } else {
+                "${node.messageCount} interactions" +
+                    (if (node.topics.isNotEmpty()) " · ${node.topics.take(4).joinToString(", ")}" else "")
+            },
             color = MytharaColors.FgDim,
             style = MaterialTheme.typography.bodySmall,
         )
