@@ -15,10 +15,18 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -144,13 +152,131 @@ fun ReminderCard(item: ChatViewModel.ChatItem.ReminderCard) {
             return@Column
         }
         Spacer(Modifier.height(10.dp))
+        var missedDialogOpen by remember { mutableStateOf(false) }
         Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             ActionChip("${Glyph.Check} done", MytharaColors.Julep) { fireAction(ctx, item.id, "done") }
             ActionChip("+15m", MytharaColors.Mustard) { fireAction(ctx, item.id, "snooze_15m") }
             ActionChip("+1h", MytharaColors.Mustard) { fireAction(ctx, item.id, "snooze_1h") }
             ActionChip("+3h", MytharaColors.Mustard) { fireAction(ctx, item.id, "snooze_3h") }
+            // "Missed it" — opens a reason picker; the reason gets
+            // recorded as a behaviour-event vault row so the
+            // daily-review agent + (planned) Auto-Resonance can
+            // learn user patterns ("missed because tired" → suggest
+            // earlier wind-down tomorrow night).
+            ActionChip("missed it", MytharaColors.Charple) { missedDialogOpen = true }
+        }
+        if (missedDialogOpen) {
+            MissedReasonDialog(
+                onDismiss = { missedDialogOpen = false },
+                onPick = { actionKind ->
+                    missedDialogOpen = false
+                    fireAction(ctx, item.id, actionKind)
+                },
+            )
         }
     }
+}
+
+/**
+ * Reason picker dialog shown when the user taps "missed it" on a
+ * fired reminder card. Each option maps to a `missed_*` action kind
+ * the [com.mythara.reminders.ReminderAlarmReceiver] understands —
+ * the receiver writes the reason facet into the behaviour vault and
+ * marks the task TaskStatus.MISSED.
+ *
+ * Last entry is "Other (free text)" — opens an inline text field so
+ * the user can give context the fixed taxonomy doesn't capture
+ * ("had a panic attack", "phone was charging in another room", etc.).
+ * Currently the free-text note is logged in the receiver's debug log
+ * only; wiring it through to the vault row is a follow-up — the
+ * fixed-reason path is enough for the agent to start learning
+ * patterns.
+ */
+@Composable
+private fun MissedReasonDialog(
+    onDismiss: () -> Unit,
+    onPick: (actionKind: String) -> Unit,
+) {
+    var freeText by remember { mutableStateOf("") }
+    var showFreeText by remember { mutableStateOf(false) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Why did you miss it?", color = MytharaColors.Fg) },
+        text = {
+            Column {
+                Text(
+                    text = "Pick the closest reason. Mythara learns your patterns " +
+                        "from this — frequent overbookings might suggest spacing your " +
+                        "calendar; lots of \"slept off\" might mean an earlier wind-down.",
+                    color = MytharaColors.FgDim,
+                    style = MaterialTheme.typography.bodySmall,
+                )
+                Spacer(Modifier.height(12.dp))
+                ReasonRow("I was overbooked", MytharaColors.Mustard) { onPick("missed_overbooked") }
+                ReasonRow("I slept through it", MytharaColors.Malibu) { onPick("missed_slept") }
+                ReasonRow("I was deep in work", MytharaColors.Charple) { onPick("missed_working") }
+                ReasonRow("I just forgot", MytharaColors.FgMute) { onPick("missed_forgot") }
+                ReasonRow("It's not relevant anymore", MytharaColors.SurfaceHigh) { onPick("missed_not_relevant") }
+                ReasonRow("Other…", MytharaColors.Bok) { showFreeText = true }
+                if (showFreeText) {
+                    Spacer(Modifier.height(8.dp))
+                    OutlinedTextField(
+                        value = freeText,
+                        onValueChange = { freeText = it },
+                        placeholder = {
+                            Text(
+                                text = "tell Mythara more — e.g. \"phone died\", " +
+                                    "\"unexpected meeting ran over\"",
+                                color = MytharaColors.FgDim,
+                                style = MaterialTheme.typography.bodySmall,
+                            )
+                        },
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedTextColor = MytharaColors.Fg,
+                            unfocusedTextColor = MytharaColors.Fg,
+                        ),
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    Spacer(Modifier.height(6.dp))
+                    TextButton(
+                        onClick = { onPick("missed_other") },
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Text("save", color = MytharaColors.Bok)
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) {
+                Text("cancel", color = MytharaColors.FgMute)
+            }
+        },
+    )
+}
+
+@Composable
+private fun ReasonRow(
+    label: String,
+    accent: androidx.compose.ui.graphics.Color,
+    onClick: () -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(8.dp))
+            .border(1.dp, accent, RoundedCornerShape(8.dp))
+            .clickable(onClick = onClick)
+            .padding(horizontal = 12.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            text = "${Glyph.DiamondOutline} $label",
+            color = accent,
+            style = MaterialTheme.typography.bodyMedium,
+        )
+    }
+    Spacer(Modifier.height(6.dp))
 }
 
 @Composable

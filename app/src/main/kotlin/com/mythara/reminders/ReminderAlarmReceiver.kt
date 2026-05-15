@@ -43,6 +43,7 @@ class ReminderAlarmReceiver : BroadcastReceiver() {
 
     @Inject lateinit var taskRepo: TaskRepository
     @Inject lateinit var announcer: ReminderAnnouncer
+    @Inject lateinit var behaviorEvents: com.mythara.behavior.BehaviorEventStore
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
@@ -117,6 +118,32 @@ class ReminderAlarmReceiver : BroadcastReceiver() {
                     cancelNotif(ctx, taskId)
                     Log.d(TAG, "$taskId marked done by user")
                 }
+            }
+            "missed_overbooked", "missed_slept", "missed_working",
+            "missed_forgot", "missed_not_relevant", "missed_other" -> {
+                // User explicitly marked the reminder "missed it" with
+                // a reason. Three things land:
+                //   1. Task row → TaskStatus.MISSED (terminal). Same
+                //      as DONE in that the alarm's gone, but the
+                //      status carries different semantic weight for
+                //      future analysis.
+                //   2. Behaviour vault row capturing the REASON so
+                //      the daily-review agent + Auto-Resonance can
+                //      learn user patterns ("missed because tired"
+                //      → suggest earlier wind-down tomorrow).
+                //   3. Notification cancelled.
+                val reason = when (kind) {
+                    "missed_overbooked" -> com.mythara.behavior.BehaviorEventStore.ReminderMissReason.Overbooked
+                    "missed_slept" -> com.mythara.behavior.BehaviorEventStore.ReminderMissReason.Slept
+                    "missed_working" -> com.mythara.behavior.BehaviorEventStore.ReminderMissReason.Working
+                    "missed_forgot" -> com.mythara.behavior.BehaviorEventStore.ReminderMissReason.Forgot
+                    "missed_not_relevant" -> com.mythara.behavior.BehaviorEventStore.ReminderMissReason.NotRelevant
+                    else -> com.mythara.behavior.BehaviorEventStore.ReminderMissReason.Other
+                }
+                taskRepo.dao.markTerminal(taskId, TaskStatus.MISSED.name, "user marked missed: ${reason.tag}", now)
+                behaviorEvents.recordReminderMiss(taskId = taskId, reason = reason)
+                cancelNotif(ctx, taskId)
+                Log.d(TAG, "$taskId marked MISSED reason=${reason.tag}")
             }
             "snooze_15m", "snooze_1h", "snooze_3h" -> {
                 val delta = when (kind) {

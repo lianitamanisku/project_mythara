@@ -144,11 +144,20 @@ fun PermissionsScreen(
                         when (perm.kind) {
                             PermKind.Runtime -> {
                                 if (perm.isGranted) {
-                                    // Already granted — open the
-                                    // system app-info page so the
-                                    // user can revoke if they want.
+                                    // Android doesn't let an app
+                                    // revoke its own runtime
+                                    // permissions — only the system
+                                    // Settings page can. Deep-link
+                                    // there with the misleading
+                                    // "tap to revoke" copy
+                                    // disambiguated by the row's
+                                    // own action label below.
                                     openAppSettings(context)
                                 } else {
+                                    // Standard system overlay prompt
+                                    // — appears as a modal dialog
+                                    // over Mythara, no Settings
+                                    // page involved.
                                     permLauncher.launch(perm.runtimePerms.toTypedArray())
                                 }
                             }
@@ -207,11 +216,20 @@ private fun PermissionRow(
             style = MaterialTheme.typography.bodySmall,
         )
         Spacer(Modifier.height(6.dp))
+        // Action copy honesty:
+        //   - Granted runtime / special perms can ONLY be revoked
+        //     in the system Settings page — apps can't revoke
+        //     their own perms. Say so explicitly.
+        //   - Not-granted runtime perms get the standard system
+        //     overlay prompt (popup dialog, no Settings page).
+        //   - Not-granted special perms always need a Settings
+        //     deep-link (notification listener, accessibility,
+        //     etc. live behind toggles only the user can flip).
         TextButton(onClick = onTap) {
             Text(
                 text = when {
-                    item.isGranted -> "tap to revoke (opens Settings)"
-                    item.kind == PermKind.Runtime -> "tap to enable"
+                    item.isGranted -> "tap to manage in Settings"
+                    item.kind == PermKind.Runtime -> "tap to grant (system popup)"
                     else -> "tap to enable in Settings"
                 },
                 color = accent,

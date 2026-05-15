@@ -21,15 +21,11 @@ import androidx.navigation.compose.rememberNavController
 import com.mythara.auth.AuthState
 import com.mythara.ui.about.AboutMeScreen
 import com.mythara.ui.about.AboutScreen
-import com.mythara.ui.amulet.AMULET_BOTTOM_MARGIN_DP
 import com.mythara.ui.amulet.AMULET_SIZE_DP
-import com.mythara.ui.amulet.Constellation
 import com.mythara.ui.amulet.ConstellationSlot
-import com.mythara.ui.amulet.QuickAction
-import com.mythara.ui.amulet.QuickActionIds
-import com.mythara.ui.amulet.QuickActionWheel
-import com.mythara.ui.amulet.RoseAmulet
+import com.mythara.ui.amulet.PopupAmulet
 import com.mythara.ui.amulet.RoseGeometry
+import com.mythara.ui.amulet.detectGlobalLongPress
 import com.mythara.ui.auth.AuthGate
 import com.mythara.ui.auth.AuthViewModel
 import com.mythara.ui.chat.ChatScreen
@@ -163,14 +159,27 @@ fun MytharaRoot(
                     val ctx = androidx.compose.ui.platform.LocalContext.current
                     val isTablet = !isCompact && ctx.isTabletDisplay()
 
-                    // The active layout (compact / tablet / two-pane) is
-                    // wrapped in a Box so the rose amulet can overlay
-                    // it at the bottom-centre on every destination —
-                    // chat, settings, insights, etc. The amulet stays
-                    // pinned across nav transitions because it lives
-                    // OUTSIDE the NavHost. Phase 1 keeps it visual-
-                    // only; later phases will layer gestures on top.
-                    Box(modifier = Modifier.fillMaxSize()) {
+                    // Long-press-summon model: the amulet is HIDDEN
+                    // by default (was persistent at the bottom; user
+                    // reported it overlapped the chat composer + the
+                    // gesture-nav home pill). Now the user holds a
+                    // finger anywhere on screen for 600ms and the
+                    // amulet appears AT the press point with a full
+                    // 360° constellation. detectGlobalLongPress runs
+                    // on the Final pointer-event pass so it never
+                    // wins a gesture a child wanted (TextField cursor
+                    // placement, button presses, scrollback drags
+                    // all keep working normally).
+                    var amuletAnchor by remember {
+                        mutableStateOf<androidx.compose.ui.geometry.Offset?>(null)
+                    }
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .detectGlobalLongPress { pos ->
+                                amuletAnchor = pos
+                            },
+                    ) {
                     if (isCompact) {
                         NavHost(navController = nav, startDestination = Routes.Chat) {
                             composable(Routes.Chat) {
@@ -241,152 +250,53 @@ fun MytharaRoot(
                         )
                     }
 
-                    // Constellation overlay — destinations radiate
-                    // outward from the amulet on swipe-up. Drawn
-                    // BEFORE the amulet so the amulet floats on top
-                    // of the scrim and remains tappable to dismiss.
-                    var constellationOpen by remember { mutableStateOf(false) }
-                    var quickWheelOpen by remember { mutableStateOf(false) }
-                    // Slot positions are clock-degrees (0° = 12, 90° = 3)
-                    // SPREAD ACROSS THE UPPER SEMICIRCLE ONLY because
-                    // the amulet sits at the bottom of the canvas — any
-                    // slot at clock 6 (180°) would land off-screen below.
-                    // 9 destinations × 22.5° apart from 270° (9 o'clock,
-                    // far-left) through 0° (top) to 90° (3 o'clock, far-
-                    // right), so the constellation fans up + outward
-                    // like petals from the amulet itself.
+                    // Slot positions are clock-degrees (0° = 12, 90° = 3).
+                    // 10 slots at 36° apart spread evenly around the FULL
+                    // CIRCLE — the popup amulet is anchored at the user's
+                    // press point, not pinned to the screen bottom, so
+                    // every angular position is reachable.
                     //
-                    // Layout convention: ADMIN on the left arc, SETTINGS
-                    // at apex, INSIGHTS / HEALTH on the right arc.
-                    // Permanent positions = predictable muscle memory.
+                    // Slot 0 (12 o'clock / top) = Chat (home), since
+                    // the old "tap rose → home" gesture went away with
+                    // the persistent amulet. Tap the central rose to
+                    // dismiss without navigating.
                     val slots = remember {
                         listOf(
-                            ConstellationSlot(270f, "me", Routes.AboutMe, MytharaColors.Malibu),
-                            ConstellationSlot(292.5f, "people", Routes.People, MytharaColors.Charple),
-                            ConstellationSlot(315f, "notes", Routes.Notes, MytharaColors.Bok),
-                            ConstellationSlot(337.5f, "tasks", Routes.Notes, MytharaColors.Mustard),
-                            ConstellationSlot(0f, "settings", Routes.Settings, MytharaColors.SurfaceHigh),
-                            ConstellationSlot(22.5f, "perms", Routes.Permissions, MytharaColors.Charple),
-                            ConstellationSlot(45f, "triage", Routes.Triage, MytharaColors.Charple),
-                            ConstellationSlot(67.5f, "insights", Routes.Insights, MytharaColors.Bok),
-                            ConstellationSlot(90f, "face", Routes.Face, MytharaColors.Bok),
+                            ConstellationSlot(0f, "chat", Routes.Chat, MytharaColors.Bok),
+                            ConstellationSlot(36f, "settings", Routes.Settings, MytharaColors.SurfaceHigh),
+                            ConstellationSlot(72f, "perms", Routes.Permissions, MytharaColors.Charple),
+                            ConstellationSlot(108f, "insights", Routes.Insights, MytharaColors.Bok),
+                            ConstellationSlot(144f, "face", Routes.Face, MytharaColors.Bok),
+                            ConstellationSlot(180f, "triage", Routes.Triage, MytharaColors.Charple),
+                            ConstellationSlot(216f, "people", Routes.People, MytharaColors.Charple),
+                            ConstellationSlot(252f, "tasks", Routes.Notes, MytharaColors.Mustard),
+                            ConstellationSlot(288f, "notes", Routes.Notes, MytharaColors.Bok),
+                            ConstellationSlot(324f, "me", Routes.AboutMe, MytharaColors.Malibu),
                         )
                     }
 
-                    Constellation(
-                        slots = slots,
-                        open = constellationOpen,
-                        amuletBottomPaddingDp = AMULET_BOTTOM_MARGIN_DP.value.toInt(),
-                        amuletSizeDp = AMULET_SIZE_DP.value.toInt(),
-                        onSlotTap = { slot ->
-                            constellationOpen = false
-                            nav.navigate(slot.route) {
-                                launchSingleTop = true
-                            }
-                        },
-                        onScrimTap = { constellationOpen = false },
-                    )
-
-                    // Quick-action wheel overlay — long-press of the
-                    // amulet surfaces the four inline composer tools
-                    // around the rose so they're thumb-reachable
-                    // without stretching to the bottom-bar.
-                    val quickActions = remember {
-                        listOf(
-                            QuickAction(QuickActionIds.Mic, "🎤"),
-                            QuickAction(QuickActionIds.SttMute, "🤫"),
-                            QuickAction(QuickActionIds.MusicMode, "♪"),
-                            QuickAction(QuickActionIds.ContinuousVoice, "∞"),
+                    // The summon-anywhere popup. Rendered above the
+                    // active layout when the user has triggered a
+                    // long-press; tap a chip to navigate, tap the
+                    // central rose or the scrim to dismiss.
+                    amuletAnchor?.let { anchor ->
+                        PopupAmulet(
+                            anchorPx = anchor,
+                            slots = slots,
+                            amuletSizeDp = AMULET_SIZE_DP.value.toInt(),
+                            onSlotTap = { slot ->
+                                amuletAnchor = null
+                                nav.navigate(slot.route) {
+                                    launchSingleTop = true
+                                }
+                            },
+                            onCenterTap = { amuletAnchor = null },
+                            onScrimTap = { amuletAnchor = null },
                         )
                     }
-                    QuickActionWheel(
-                        open = quickWheelOpen,
-                        actions = quickActions,
-                        amuletBottomPaddingDp = AMULET_BOTTOM_MARGIN_DP.value.toInt(),
-                        amuletSizeDp = AMULET_SIZE_DP.value.toInt(),
-                        onActionTap = { _ ->
-                            // Phase 3 placeholder — wire to actual
-                            // STT/mic/music toggles in a follow-up
-                            // pass once the amulet flow is verified.
-                            // For now, dismiss + log so the gesture
-                            // path is end-to-end testable.
-                            quickWheelOpen = false
-                        },
-                        onScrimTap = { quickWheelOpen = false },
-                    )
 
-                    // Persistent rose amulet — overlays every screen
-                    // at the bottom-centre. Gestures wired:
-                    //   tap         → return to chat (home)
-                    //   swipe-up    → toggle constellation
-                    //   long-press  → toggle quick-action wheel
-                    //   triple-tap  → secret unlock
-                    //   swipe L/R   → step adjacent primary screens
-                    //                 (insights ↔ chat ↔ face)
-                    RoseAmulet(
-                        modifier = Modifier
-                            .align(Alignment.BottomCenter)
-                            .padding(bottom = AMULET_BOTTOM_MARGIN_DP)
-                            .size(AMULET_SIZE_DP),
-                        onTap = {
-                            // If a layered overlay is open, tap on
-                            // the rose closes it; otherwise navigate
-                            // home (Chat). This gives the rose a
-                            // single, predictable "back to ground"
-                            // semantic regardless of state.
-                            when {
-                                quickWheelOpen -> quickWheelOpen = false
-                                constellationOpen -> constellationOpen = false
-                                else -> {
-                                    if (nav.currentDestination?.route != Routes.Chat) {
-                                        nav.navigate(Routes.Chat) {
-                                            popUpTo(Routes.Chat) { inclusive = false }
-                                            launchSingleTop = true
-                                        }
-                                    }
-                                }
-                            }
-                        },
-                        onLongPress = {
-                            constellationOpen = false
-                            quickWheelOpen = !quickWheelOpen
-                        },
-                        onSwipeUp = {
-                            quickWheelOpen = false
-                            constellationOpen = !constellationOpen
-                        },
-                        onTripleTap = {
-                            constellationOpen = false
-                            quickWheelOpen = false
-                            secretUnlockOpen = true
-                        },
-                        onSwipeLeft = {
-                            // Step to the "left" primary screen.
-                            // Order: Chat → Insights → Face → People.
-                            // A swipe LEFT on the rose moves you to
-                            // the next item; swipe RIGHT goes back.
-                            val current = nav.currentDestination?.route
-                            val target = stepPrimary(current, forward = true)
-                            if (target != null && target != current) {
-                                nav.navigate(target) {
-                                    launchSingleTop = true
-                                    popUpTo(Routes.Chat) { inclusive = false }
-                                }
-                            }
-                        },
-                        onSwipeRight = {
-                            val current = nav.currentDestination?.route
-                            val target = stepPrimary(current, forward = false)
-                            if (target != null && target != current) {
-                                nav.navigate(target) {
-                                    launchSingleTop = true
-                                    popUpTo(Routes.Chat) { inclusive = false }
-                                }
-                            }
-                        },
-                    )
                     // Suppress unused warning — RoseGeometry is used
-                    // by the Constellation/Amulet/Bloom imports.
+                    // by Constellation / Amulet / Bloom imports.
                     @Suppress("UNUSED_VARIABLE") val unused = RoseGeometry.OuterRadiusSourceUnits
 
                     // Fold-open rose bloom — plays every time the

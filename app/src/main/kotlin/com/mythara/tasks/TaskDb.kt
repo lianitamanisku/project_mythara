@@ -89,6 +89,12 @@ enum class TaskStatus {
     DONE,      // terminal
     FAILED,    // terminal
     CANCELED,  // terminal — user pulled the plug
+    /** Terminal — user marked the reminder "missed it" with a reason
+     *  (overbooked / slept off / working / forgot / other). The reason
+     *  itself lives in a separate vault row (kind:reminder-miss + the
+     *  reason facet) so the agent can learn behavioural patterns
+     *  without reshaping the task table. */
+    MISSED,
 }
 
 @Dao
