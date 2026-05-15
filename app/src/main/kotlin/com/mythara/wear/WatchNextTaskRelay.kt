@@ -7,15 +7,8 @@ import com.mythara.tasks.TaskStatus
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.combine
-import kotlinx.coroutines.flow.distinctUntilChanged
-import kotlinx.coroutines.flow.map
-import kotlinx.coroutines.launch
 import kotlinx.coroutines.delay
-import java.text.SimpleDateFormat
-import java.util.Date
-import java.util.Locale
+import kotlinx.coroutines.launch
 import java.util.concurrent.TimeUnit
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -45,7 +38,6 @@ class WatchNextTaskRelay @Inject constructor(
     private val pusher: WatchInsightPusher,
 ) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
-    private val tick = MutableStateFlow(0L)
 
     /** Compute the current next-task line and push it once. Public
      *  so the manual "sync to watch now" path + the periodic
@@ -59,24 +51,26 @@ class WatchNextTaskRelay @Inject constructor(
     }
 
     fun start() {
-        // Wall-clock ticker — emit every minute so the "in N min"
-        // countdown re-evaluates against the current time.
+        // Wall-clock loop — every minute, re-read tasks and push the
+        // current line. The line includes a live countdown ("in 12m",
+        // "in 1h 30m") that drifts as wall-clock time advances, so we
+        // need to push regardless of whether row data has changed.
+        // The push pipeline (WatchInsightPusher → WearableMessageClient
+        // → InsightStore) is dedup-safe — identical strings hit the
+        // "insight unchanged; no buzz, no refresh" fast-path on the
+        // watch side, so this loop is cheap when the line happens not
+        // to change minute-over-minute.
         scope.launch {
             while (true) {
-                tick.value = System.currentTimeMillis()
+                pushNow()
                 delay(TICK_INTERVAL_MS)
             }
         }
-        // Combine task changes + ticker → recompute the headline line.
+        // Also fire on every DB change so a freshly-created or
+        // cancelled task shows up immediately, not at the next tick.
         scope.launch {
             taskRepo.dao.observeRecent(limit = 200)
-                .combine(tick) { rows, _ -> rows }
-                .map { rows -> formatLine(rows) }
-                .distinctUntilChanged()
-                .collect { line ->
-                    runCatching { pusher.push(line) }
-                        .onFailure { Log.w(TAG, "push failed: ${it.message}") }
-                }
+                .collect { _ -> pushNow() }
         }
     }
 
@@ -115,16 +109,27 @@ class WatchNextTaskRelay @Inject constructor(
         }
     }
 
+    /** ALWAYS a live countdown so the line re-renders minute-over-
+     *  minute as the wall clock advances. The previous version
+     *  switched to absolute time ("14:30") for >60-min targets and
+     *  appeared frozen on the wrist; the new format keeps "in Nh
+     *  Mm" / "in Nd Hh" so the watch is always visibly counting
+     *  down toward the next event. */
     private fun relativeTime(deltaMs: Long, whenMs: Long): String {
-        val mins = TimeUnit.MILLISECONDS.toMinutes(deltaMs)
+        val totalMins = TimeUnit.MILLISECONDS.toMinutes(deltaMs)
         return when {
-            mins < 1 -> "now"
-            mins < 60 -> "in ${mins}m"
-            mins < 24 * 60 -> {
-                val sameDay = isSameDay(whenMs, System.currentTimeMillis())
-                if (sameDay) HOUR_FMT.format(Date(whenMs)) else "tomorrow ${HOUR_FMT.format(Date(whenMs))}"
+            totalMins < 1 -> "now"
+            totalMins < 60 -> "in ${totalMins}m"
+            totalMins < 24 * 60 -> {
+                val h = totalMins / 60
+                val m = totalMins % 60
+                if (m == 0L) "in ${h}h" else "in ${h}h ${m}m"
             }
-            else -> DAY_FMT.format(Date(whenMs))
+            else -> {
+                val days = totalMins / (24 * 60)
+                val hoursRem = (totalMins % (24 * 60)) / 60
+                if (hoursRem == 0L) "in ${days}d" else "in ${days}d ${hoursRem}h"
+            }
         }
     }
 
@@ -137,13 +142,6 @@ class WatchNextTaskRelay @Inject constructor(
             set(java.util.Calendar.MILLISECOND, 0)
         }
         return cal.timeInMillis
-    }
-
-    private fun isSameDay(aMs: Long, bMs: Long): Boolean {
-        val a = java.util.Calendar.getInstance().apply { timeInMillis = aMs }
-        val b = java.util.Calendar.getInstance().apply { timeInMillis = bMs }
-        return a.get(java.util.Calendar.YEAR) == b.get(java.util.Calendar.YEAR) &&
-            a.get(java.util.Calendar.DAY_OF_YEAR) == b.get(java.util.Calendar.DAY_OF_YEAR)
     }
 
     companion object {
@@ -160,7 +158,5 @@ class WatchNextTaskRelay @Inject constructor(
          *  for the " · in 12m" suffix. */
         private const val MAX_TITLE_CHARS = 80
 
-        private val HOUR_FMT = SimpleDateFormat("HH:mm", Locale.getDefault())
-        private val DAY_FMT = SimpleDateFormat("MMM d HH:mm", Locale.getDefault())
     }
 }
