@@ -13,6 +13,7 @@ import com.google.android.gms.wearable.WearableListenerService
 import com.mythara.wear.complications.InsightComplicationService
 import com.mythara.wear.complications.PhoneBatteryComplicationService
 import com.mythara.wear.complications.ReminderComplicationService
+import com.mythara.wear.resonance.ResonanceStore
 
 /**
  * Watch-side companion to the phone's Data Layer pushes.
@@ -91,6 +92,38 @@ class MytharaWearDataReceiver : WearableListenerService() {
                 val raw = runCatching { String(event.data, Charsets.UTF_8) }.getOrNull() ?: return
                 Log.d(TAG, "audit snapshot from phone (${raw.length}B)")
                 ClusterDataStore.saveAudit(this, raw)
+            }
+
+            WearPaths.RESONANCE_AVAIL -> {
+                // Phone-pushed feature flag — flips the toggle dot's
+                // visibility on the watch. Payload "1" / "0".
+                val raw = runCatching { String(event.data, Charsets.UTF_8).trim() }.getOrNull()
+                val avail = raw == "1"
+                Log.d(TAG, "resonance availability from phone: $avail")
+                ResonanceStore.setAvailable(this, avail)
+                // If the phone disabled the feature mid-session, also
+                // force-clear local active state so the pad disappears
+                // AND drop HR streaming back to the slow baseline.
+                if (!avail) {
+                    ResonanceStore.setActive(this, false)
+                    HeartRateService.stopStreaming(this)
+                }
+            }
+
+            WearPaths.RESONANCE_STATE -> {
+                // Phone-confirmed session state — buzz so the user
+                // knows their toggle / End-Session combo landed.
+                val raw = runCatching { String(event.data, Charsets.UTF_8).trim() }.getOrNull()
+                Log.d(TAG, "resonance state from phone: $raw")
+                if (raw == "ended") {
+                    // Mirror the local flag so the pad collapses if the
+                    // phone ended the session for any reason (cap timer,
+                    // headphone removal, hard stop from the app, etc.),
+                    // and drop HR sampling back to the slow baseline.
+                    ResonanceStore.setActive(this, false)
+                    HeartRateService.stopStreaming(this)
+                }
+                buzz()
             }
 
             else -> Log.d(TAG, "ignored message on ${event.path}")

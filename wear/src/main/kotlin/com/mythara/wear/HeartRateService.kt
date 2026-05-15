@@ -16,9 +16,11 @@ import android.util.Log
 import com.google.android.gms.wearable.Wearable
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 
 /**
@@ -40,13 +42,22 @@ class HeartRateService : Service(), SensorEventListener {
     /** Most recent valid bpm reading, or -1 until the sensor warms up. */
     @Volatile private var latestBpm: Int = -1
 
+    /** Current sensor sample rate. Slow by default; the Resonance
+     *  fast-stream mode bumps it up while a session is active. */
+    @Volatile private var currentRate: Int = SensorManager.SENSOR_DELAY_NORMAL
+
+    /** Fast push job — set while streaming, cancelled when streaming
+     *  stops. The slow [PUSH_INTERVAL_MS] loop in onCreate keeps
+     *  running independently. */
+    private var streamJob: Job? = null
+
     override fun onCreate() {
         super.onCreate()
         startForeground(NOTIF_ID, buildNotification())
         sensorManager = (getSystemService(Context.SENSOR_SERVICE) as? SensorManager)?.also { sm ->
             val hr = sm.getDefaultSensor(Sensor.TYPE_HEART_RATE)
             if (hr != null) {
-                sm.registerListener(this, hr, SensorManager.SENSOR_DELAY_NORMAL)
+                sm.registerListener(this, hr, currentRate)
             } else {
                 Log.w(TAG, "no heart-rate sensor on this device")
             }
@@ -64,7 +75,63 @@ class HeartRateService : Service(), SensorEventListener {
     // NOT sticky: a background auto-restart would hit the Android 12+
     // background-FGS-start ban and crash-loop. The activity re-starts
     // it from onResume() instead, which is a guaranteed-foreground point.
-    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int = START_NOT_STICKY
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        val wantStreaming = intent?.getBooleanExtra(EXTRA_STREAMING, false) == true
+        if (wantStreaming) startStreamingInternal() else stopStreamingInternal()
+        return START_NOT_STICKY
+    }
+
+    /**
+     * Bump sensor sample rate to [SensorManager.SENSOR_DELAY_UI] (~16ms)
+     * and start a 1Hz push of the latest reading over
+     * [WearPaths.RESONANCE_HR]. Idempotent. The slow 3-minute push on
+     * [WearPaths.HEART_RATE] keeps running underneath.
+     */
+    private fun startStreamingInternal() {
+        if (streamJob?.isActive == true) {
+            Log.d(TAG, "streaming already active; skipping")
+            return
+        }
+        applySensorRate(SensorManager.SENSOR_DELAY_UI)
+        Log.d(TAG, "resonance HR stream starting")
+        streamJob = scope.launch {
+            while (isActive) {
+                delay(STREAM_INTERVAL_MS)
+                pushStreamSample()
+            }
+        }
+    }
+
+    /** Drop sample rate back to NORMAL and stop the fast push loop. */
+    private fun stopStreamingInternal() {
+        if (streamJob?.isActive != true) return
+        Log.d(TAG, "resonance HR stream stopping")
+        streamJob?.cancel()
+        streamJob = null
+        applySensorRate(SensorManager.SENSOR_DELAY_NORMAL)
+    }
+
+    private fun applySensorRate(target: Int) {
+        if (target == currentRate) return
+        val sm = sensorManager ?: return
+        val hr = sm.getDefaultSensor(Sensor.TYPE_HEART_RATE) ?: return
+        runCatching { sm.unregisterListener(this) }
+        sm.registerListener(this, hr, target)
+        currentRate = target
+    }
+
+    private fun pushStreamSample() {
+        val bpm = latestBpm
+        if (bpm !in VALID_BPM) return
+        val payload = "$bpm|${System.currentTimeMillis()}".toByteArray(Charsets.UTF_8)
+        val nodeClient = Wearable.getNodeClient(this)
+        val msgClient = Wearable.getMessageClient(this)
+        nodeClient.connectedNodes
+            .addOnSuccessListener { nodes ->
+                for (node in nodes) msgClient.sendMessage(node.id, WearPaths.RESONANCE_HR, payload)
+            }
+            .addOnFailureListener { e -> Log.w(TAG, "stream HR push failed: ${e.message}") }
+    }
 
     override fun onSensorChanged(event: SensorEvent?) {
         val bpm = event?.values?.firstOrNull()?.toInt() ?: return
@@ -124,10 +191,27 @@ class HeartRateService : Service(), SensorEventListener {
         private const val CHANNEL_ID = "mythara_heart_rate"
         private const val NOTIF_ID = 0x4842
         private const val PUSH_INTERVAL_MS = 3L * 60 * 1000
+        /** Resonance Mode fast-stream cadence — ~1Hz. */
+        private const val STREAM_INTERVAL_MS = 1_000L
         private val VALID_BPM = 30..240
 
-        fun start(ctx: Context) {
+        /** Intent extra: when true, the service runs in fast-stream
+         *  mode for a Resonance session (1Hz push on RESONANCE_HR). */
+        private const val EXTRA_STREAMING = "stream"
+
+        /** Start (or re-attach to) the slow 3-min HR push baseline. */
+        fun start(ctx: Context) = launchSelf(ctx, streaming = false)
+
+        /** Bump the running service into fast-stream mode for the
+         *  duration of a Resonance session. Idempotent. */
+        fun startStreaming(ctx: Context) = launchSelf(ctx, streaming = true)
+
+        /** Drop fast-stream mode back to the slow baseline. */
+        fun stopStreaming(ctx: Context) = launchSelf(ctx, streaming = false)
+
+        private fun launchSelf(ctx: Context, streaming: Boolean) {
             val intent = Intent(ctx, HeartRateService::class.java)
+                .putExtra(EXTRA_STREAMING, streaming)
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 ctx.startForegroundService(intent)
             } else {

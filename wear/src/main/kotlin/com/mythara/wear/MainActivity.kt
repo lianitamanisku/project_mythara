@@ -65,6 +65,8 @@ import androidx.wear.compose.material.SwipeToDismissValue
 import androidx.wear.compose.material.Text
 import androidx.wear.compose.material.rememberSwipeToDismissBoxState
 import com.google.android.gms.wearable.Wearable
+import com.mythara.wear.resonance.ResonancePad
+import com.mythara.wear.resonance.ResonanceStore
 import kotlinx.coroutines.launch
 import java.util.Locale
 import kotlin.math.sqrt
@@ -308,6 +310,11 @@ private fun PttScreen(
     var status by remember { mutableStateOf("shake wrist or tap to talk") }
     var weather by remember { mutableStateOf("…") }
     var recognizer: SpeechRecognizer? by remember { mutableStateOf(null) }
+    // Resonance Mode flags. `available` = phone has enabled the feature
+    // in the secret menu; `active` = the user has flipped the discreet
+    // toggle dot on this watch.
+    val resonanceAvailable by ResonanceStore.observeAvailable(ctx)
+    val resonanceActive by ResonanceStore.observeActive(ctx)
 
     val permLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission(),
@@ -404,9 +411,11 @@ private fun PttScreen(
         sr.startListening(intent)
     }
 
-    // Wrist shake → talk. Only registers while NOT already listening, so
-    // a shake mid-utterance doesn't cut it off.
-    ShakeToTalk(enabled = !listening) { startPtt() }
+    // Wrist shake → talk. Only registers while NOT already listening
+    // and NOT in Resonance Mode — pad taps would false-trigger the
+    // accelerometer, and a shake while the user is mid-combo would be
+    // an unwanted interrupt.
+    ShakeToTalk(enabled = !listening && !resonanceActive) { startPtt() }
 
     Column(
         modifier = Modifier
@@ -417,59 +426,106 @@ private fun PttScreen(
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         Text(text = "MYTHARA", color = PURPLE, fontSize = 14.sp, textAlign = TextAlign.Center)
-        Spacer(Modifier.height(3.dp))
-        Text(
-            text = weather,
-            color = BOK,
-            fontSize = 10.sp,
-            textAlign = TextAlign.Center,
-            modifier = Modifier.clickable {
-                weather = "…"
-                scope.launch { weather = loadWeather(ctx) }
-            },
-        )
-        Spacer(Modifier.height(6.dp))
-        Text(
-            text = partial.ifBlank { status },
-            color = if (partial.isBlank()) Color(0xFF999999) else Color.White,
-            fontSize = 11.sp,
-            textAlign = TextAlign.Center,
-        )
-        Spacer(Modifier.height(10.dp))
-        Box(
-            modifier = Modifier
-                .size(84.dp)
-                .clip(CircleShape)
-                .background(if (listening) BOK else PURPLE)
-                .border(2.dp, Color.White.copy(alpha = 0.3f), CircleShape)
-                .clickable { startPtt() },
-            contentAlignment = Alignment.Center,
-        ) {
+        // Weather + status + mic button only when NOT in a Resonance
+        // session — eyes-free mode needs the vertical room for the
+        // pad's 4 buttons + dots, and the mic tap is replaced by the
+        // Start-PTT combo (B,B) anyway.
+        if (!resonanceActive) {
+            Spacer(Modifier.height(3.dp))
             Text(
-                text = if (listening) "■" else "🎤",
-                color = Color.Black,
-                fontSize = 28.sp,
+                text = weather,
+                color = BOK,
+                fontSize = 10.sp,
+                textAlign = TextAlign.Center,
+                modifier = Modifier.clickable {
+                    weather = "…"
+                    scope.launch { weather = loadWeather(ctx) }
+                },
+            )
+            Spacer(Modifier.height(6.dp))
+            Text(
+                text = partial.ifBlank { status },
+                color = if (partial.isBlank()) Color(0xFF999999) else Color.White,
+                fontSize = 11.sp,
+                textAlign = TextAlign.Center,
+            )
+            Spacer(Modifier.height(10.dp))
+            Box(
+                modifier = Modifier
+                    .size(84.dp)
+                    .clip(CircleShape)
+                    .background(if (listening) BOK else PURPLE)
+                    .border(2.dp, Color.White.copy(alpha = 0.3f), CircleShape)
+                    .clickable { startPtt() },
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(
+                    text = if (listening) "■" else "🎤",
+                    color = Color.Black,
+                    fontSize = 28.sp,
+                )
+            }
+        }
+        // Resonance toggle dot — small + low-opacity below the mic.
+        // Only rendered when the phone has enabled the feature in the
+        // secret menu; tapping it flips local active state and echoes
+        // the change to the phone.
+        if (resonanceAvailable) {
+            Spacer(Modifier.height(8.dp))
+            Box(
+                modifier = Modifier
+                    .size(18.dp)
+                    .clip(CircleShape)
+                    .background(if (resonanceActive) BOK else Color.White.copy(alpha = 0.18f))
+                    .border(1.dp, Color.White.copy(alpha = 0.30f), CircleShape)
+                    .clickable {
+                        val newActive = !resonanceActive
+                        ResonanceStore.setActive(ctx, newActive)
+                        // Bump HR sampling into fast-stream mode so the
+                        // phone gets ~1Hz samples for the analyzer +
+                        // closed loop. Drops back to the slow 3-min
+                        // baseline when the toggle goes off.
+                        if (newActive) {
+                            HeartRateService.startStreaming(ctx)
+                        } else {
+                            HeartRateService.stopStreaming(ctx)
+                        }
+                        sendBytesToPhone(
+                            ctx,
+                            WearPaths.RESONANCE_TOGGLE,
+                            (if (newActive) "on" else "off").toByteArray(Charsets.UTF_8),
+                        )
+                    },
             )
         }
+
         Spacer(Modifier.height(10.dp))
-        // Navigation to the read-only cluster surfaces — 2×2 so the
-        // pills stay tappable on a round face. Swipe also works.
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            NavPill("tasks", onOpenTasks)
-            NavPill("today", onOpenCalendar)
+        if (resonanceActive) {
+            // Discreet input pad takes over the lower half — the user
+            // is in eyes-free mode and shouldn't be navigating around.
+            // Pass the host's startPtt so the Start-PTT combo (B,B)
+            // fires the recognizer locally without a phone round-trip.
+            ResonancePad(onStartPtt = { startPtt() })
+        } else {
+            // Navigation to the read-only cluster surfaces — 2×2 so the
+            // pills stay tappable on a round face. Swipe also works.
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                NavPill("tasks", onOpenTasks)
+                NavPill("today", onOpenCalendar)
+            }
+            Spacer(Modifier.height(6.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                NavPill("people", onOpenPeople)
+                NavPill("logs", onOpenAudit)
+            }
+            Spacer(Modifier.height(6.dp))
+            Text(
+                text = "tap a tile · swipe › to go back",
+                color = MUTE,
+                fontSize = 9.sp,
+                textAlign = TextAlign.Center,
+            )
         }
-        Spacer(Modifier.height(6.dp))
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            NavPill("people", onOpenPeople)
-            NavPill("logs", onOpenAudit)
-        }
-        Spacer(Modifier.height(6.dp))
-        Text(
-            text = "tap a tile · swipe › to go back",
-            color = MUTE,
-            fontSize = 9.sp,
-            textAlign = TextAlign.Center,
-        )
     }
 }
 
@@ -806,6 +862,29 @@ internal fun sendToPhone(ctx: android.content.Context, text: String) {
 }
 
 /**
+ * Path-aware fan-out for any Resonance message. Same fire-and-forget
+ * MessageClient pattern as [sendToPhone], but lets the caller pick the
+ * path so we don't have to overload the PTT-specific helper for every
+ * new wire path the watch wants to push.
+ */
+internal fun sendBytesToPhone(ctx: android.content.Context, path: String, bytes: ByteArray) {
+    val nodeClient = Wearable.getNodeClient(ctx)
+    val msgClient = Wearable.getMessageClient(ctx)
+    nodeClient.connectedNodes
+        .addOnSuccessListener { nodes ->
+            for (node in nodes) {
+                msgClient.sendMessage(node.id, path, bytes)
+                    .addOnFailureListener { e ->
+                        Log.w(TAG, "send $path to ${node.displayName} failed: ${e.message}")
+                    }
+            }
+        }
+        .addOnFailureListener { e ->
+            Log.w(TAG, "could not list connected nodes for $path: ${e.message}")
+        }
+}
+
+/**
  * Resolve the PTT screen's weather line — current-location conditions
  * via [fetchWeather], collapsed to a short wrist-sized status string.
  */
@@ -851,4 +930,24 @@ object WearPaths {
 
     /** Phone → watch: delimited snapshot of the recent agent audit log. */
     const val AUDIT = "/mythara/audit"
+
+    // ---- Resonance Mode (discreet sound control + closed-loop self-regulation)
+
+    /** Watch → phone: a committed 2-tap combo. Payload "<code>|<epochMs>". */
+    const val RESONANCE_COMBO = "/mythara/resonance/combo"
+
+    /** Watch → phone: live HR sample while a Resonance session is active.
+     *  Payload "<bpm>|<epochMs>". */
+    const val RESONANCE_HR = "/mythara/resonance/hr"
+
+    /** Watch → phone: the discreet on/off toggle next to the mic button.
+     *  Payload "on" / "off". */
+    const val RESONANCE_TOGGLE = "/mythara/resonance/toggle"
+
+    /** Phone → watch: feature enabled in the secret menu. Payload "1" / "0". */
+    const val RESONANCE_AVAIL = "/mythara/resonance/avail"
+
+    /** Phone → watch: session active state for confirm/end haptic.
+     *  Payload "active" / "ended". */
+    const val RESONANCE_STATE = "/mythara/resonance/state"
 }
