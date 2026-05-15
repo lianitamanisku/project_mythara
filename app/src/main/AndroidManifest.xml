@@ -214,6 +214,23 @@
                 android:value="long-running on-device speech observation for personal AI assistant" />
         </service>
 
+        <!-- Resonance Mode foreground service. Hosts the closed-loop
+             controller + the binaural/isochronic audio engine while a
+             session is active. specialUse only — Resonance never holds
+             the mic itself (the analyzer's brief acoustic-sample goes
+             through MicBroker.acquire(RESONANCE) which is its own gate).
+             Owns the headphone-removal BroadcastReceiver + the audio-
+             focus listener so the session hard-stops on either signal. -->
+        <service
+            android:name=".resonance.ResonanceForegroundService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse"
+            tools:targetApi="34">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="closed-loop auditory self-regulation session for personal AI assistant" />
+        </service>
+
         <!-- M5 Notification listener. User grants via Settings →
              Apps → Special app access → Notification access; can't be
              auto-granted by the app. Buffer is in-memory only, never

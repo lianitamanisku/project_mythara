@@ -17,6 +17,11 @@ import com.mythara.secret.observe.vosk.SpeakerModelStore
 import com.mythara.secret.observe.extract.gemma.GemmaExtractor
 import com.mythara.secret.observe.extract.gemma.GemmaModelStore
 import com.mythara.secret.observe.extract.gemma.HuggingFaceTokenStore
+import com.mythara.data.ResonanceSettings
+import com.mythara.resonance.ResonanceAudioEngine
+import com.mythara.resonance.ResonanceCommand
+import com.mythara.resonance.ResonanceController
+import com.mythara.resonance.ResonanceLoop
 import com.mythara.secret.observe.vault.LearningEntity
 import com.mythara.secret.observe.vault.LearningVault
 import com.mythara.secret.observe.vosk.Language
@@ -51,6 +56,10 @@ class SecretSettingsViewModel @Inject constructor(
     private val vault: LearningVault,
     private val semanticExtractor: com.mythara.secret.observe.extract.SemanticExtractor,
     private val episodicPromoter: com.mythara.agent.EpisodicPromoter,
+    private val resonanceSettings: ResonanceSettings,
+    private val resonanceEngine: ResonanceAudioEngine,
+    private val resonanceLoop: ResonanceLoop,
+    private val resonanceController: ResonanceController,
 ) : ViewModel() {
 
     data class State(
@@ -79,6 +88,12 @@ class SecretSettingsViewModel @Inject constructor(
         val gemmaProbe: GemmaProbe = GemmaProbe.Idle,
         val gemmaEnabled: Boolean = false,
         val episodicReport: EpisodicReport = EpisodicReport.Idle,
+        // ---- Resonance Mode (off by default; secret-menu opt-in) ----
+        val resonanceEnabled: Boolean = false,
+        val resonanceDefaultProtocol: String = ResonanceSettings.DEFAULT_PROTOCOL,
+        val resonanceVolumeCapPercent: Int = ResonanceSettings.DEFAULT_VOLUME_CAP_PERCENT,
+        val resonanceEngineState: ResonanceAudioEngine.State = ResonanceAudioEngine.State(),
+        val resonanceLoopPhase: ResonanceLoop.Phase = ResonanceLoop.Phase.Idle,
     ) {
         val readyToStart: Boolean
             get() = micGranted && (!notifRequired || notifGranted) && modelState is VoskModelStore.State.Ready
@@ -195,8 +210,67 @@ class SecretSettingsViewModel @Inject constructor(
                 _state.update { it.copy(recentLearnings = previews) }
             }
         }
+        // ---- Resonance Mode flows ----
+        viewModelScope.launch {
+            resonanceSettings.enabledFlow().collect { v ->
+                _state.update { it.copy(resonanceEnabled = v) }
+            }
+        }
+        viewModelScope.launch {
+            resonanceSettings.defaultProtocolFlow().collect { v ->
+                _state.update { it.copy(resonanceDefaultProtocol = v) }
+            }
+        }
+        viewModelScope.launch {
+            resonanceSettings.volumeCapPercentFlow().collect { v ->
+                _state.update { it.copy(resonanceVolumeCapPercent = v) }
+            }
+        }
+        viewModelScope.launch {
+            resonanceEngine.state.collect { s ->
+                _state.update { it.copy(resonanceEngineState = s) }
+            }
+        }
+        viewModelScope.launch {
+            resonanceLoop.phase.collect { p ->
+                _state.update { it.copy(resonanceLoopPhase = p) }
+            }
+        }
         refreshPermission()
         refreshTranscripts()
+    }
+
+    // ---- Resonance Mode setters / actions ----
+
+    fun setResonanceEnabled(value: Boolean) {
+        viewModelScope.launch { resonanceSettings.setEnabled(value) }
+    }
+
+    fun setResonanceDefaultProtocol(name: String) {
+        viewModelScope.launch { resonanceSettings.setDefaultProtocol(name) }
+    }
+
+    fun setResonanceVolumeCapPercent(value: Int) {
+        viewModelScope.launch {
+            resonanceSettings.setVolumeCapPercent(value)
+            // Apply immediately if a session is currently audible.
+            resonanceEngine.setVolumeCap(value / 100f)
+        }
+    }
+
+    /** Manually start a Resonance session from the secret menu (handy
+     *  for testing without the watch). Uses the configured default
+     *  protocol; routes through the controller so the same FGS path
+     *  + safety rails apply. */
+    fun startResonanceFromApp() {
+        val name = state.value.resonanceDefaultProtocol
+        val protocol = runCatching { ResonanceCommand.Protocol.valueOf(name) }
+            .getOrDefault(ResonanceCommand.Protocol.Calm)
+        resonanceController.startProtocolFromApp(protocol)
+    }
+
+    fun stopResonanceFromApp() {
+        resonanceController.stopFromApp()
     }
 
     fun setBiometricUnlock(enabled: Boolean) {

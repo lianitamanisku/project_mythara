@@ -47,6 +47,10 @@ class MicBroker @Inject constructor(
         LUMI_LISTEN,
         /** ChatScreen continuous voice mode (Pixel Soda). */
         CONTINUOUS_CHAT,
+        /** ResonanceStateAnalyzer — short ~8s acoustic sample taken at
+         *  the start of a Resonance session to seed mood/arousal. Held
+         *  briefly, released immediately after the sample. */
+        RESONANCE,
     }
 
     private val _owner = MutableStateFlow<Client?>(null)
@@ -128,6 +132,7 @@ class MicBroker @Inject constructor(
         Client.OBSERVE -> "Observe mode"
         Client.LUMI_LISTEN -> "Lumi wake-word listener"
         Client.CONTINUOUS_CHAT -> "continuous voice chat"
+        Client.RESONANCE -> "Resonance mode acoustic sample"
     }
 
     companion object {

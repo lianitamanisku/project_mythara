@@ -5,6 +5,7 @@ import com.google.android.gms.wearable.MessageEvent
 import com.google.android.gms.wearable.WearableListenerService
 import com.mythara.agent.AgentRunner
 import com.mythara.memory.Tier
+import com.mythara.resonance.ResonanceController
 import com.mythara.secret.observe.vault.LearningVault
 import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.CoroutineScope
@@ -34,6 +35,7 @@ class MytharaWearListenerService : WearableListenerService() {
 
     @Inject lateinit var runner: AgentRunner
     @Inject lateinit var vault: LearningVault
+    @Inject lateinit var resonance: ResonanceController
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
@@ -77,6 +79,30 @@ class MytharaWearListenerService : WearableListenerService() {
                     }.onFailure { Log.w(TAG, "HR vault write failed: ${it.message}") }
                 }
             }
+            RESONANCE_COMBO_PATH -> {
+                // Resonance Mode — a 2-tap combo committed on the watch.
+                // ResonanceController decodes the wire payload and
+                // dispatches the matching command / protocol.
+                val raw = runCatching { String(event.data, Charsets.UTF_8).trim() }.getOrNull()
+                Log.d(TAG, "resonance combo from watch: $raw")
+                resonance.onComboPayload(raw)
+            }
+            RESONANCE_HR_PATH -> {
+                // Live HR sample while a Resonance session is active.
+                // ResonanceController forwards into ResonanceHrStore for
+                // analysis + periodic vault flush; samples arriving with
+                // no session open are dropped silently.
+                val raw = runCatching { String(event.data, Charsets.UTF_8).trim() }.getOrNull()
+                resonance.onHrPayload(raw)
+            }
+            RESONANCE_TOGGLE_PATH -> {
+                // Watch's discreet on/off toggle. "on" opens an
+                // auto-pick session; "off" closes the active one.
+                // Phase 4 will additionally start the audio loop.
+                val raw = runCatching { String(event.data, Charsets.UTF_8).trim() }.getOrNull()
+                Log.d(TAG, "resonance toggle from watch: $raw")
+                resonance.onTogglePayload(raw)
+            }
             else -> Log.d(TAG, "ignored message on ${event.path}")
         }
     }
@@ -87,5 +113,18 @@ class MytharaWearListenerService : WearableListenerService() {
 
         /** Watch → phone: a single heart-rate reading (bpm). */
         const val HEART_RATE_PATH = "/mythara/heart_rate"
+
+        // ---- Resonance Mode wire paths (mirror wear/.../WearPaths) ----
+
+        /** Watch → phone: a committed 2-tap combo. Payload "<code>|<epochMs>". */
+        const val RESONANCE_COMBO_PATH = "/mythara/resonance/combo"
+
+        /** Watch → phone: live HR sample while a session is active.
+         *  Payload "<bpm>|<epochMs>". */
+        const val RESONANCE_HR_PATH = "/mythara/resonance/hr"
+
+        /** Watch → phone: the discreet on/off toggle next to the mic
+         *  button on the watch. Payload "on" / "off". */
+        const val RESONANCE_TOGGLE_PATH = "/mythara/resonance/toggle"
     }
 }

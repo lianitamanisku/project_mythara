@@ -19,6 +19,7 @@ import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.systemBars
 import androidx.compose.foundation.rememberScrollState
@@ -825,6 +826,121 @@ fun SecretSettingsScreen(
                 color = MytharaColors.FgDim,
                 style = MaterialTheme.typography.bodySmall,
             )
+        }
+
+        Spacer(Modifier.height(14.dp))
+
+        Panel("resonance mode") {
+            Text(
+                text = "${Glyph.AccentBar} discreet sound control + closed-loop auditory self-regulation. " +
+                    "off by default. when on, the watch shows a tiny toggle by the mic; tap it (or send a " +
+                    "calm/focus/wind-down combo) to start a session — tones play to YOUR ears, gated by your " +
+                    "own heart rate. wellness aid, not a medical treatment. session caps + safety clamps " +
+                    "are baked into the audio engine.",
+                color = MytharaColors.FgMute,
+                style = MaterialTheme.typography.bodySmall,
+            )
+            Spacer(Modifier.height(8.dp))
+            ToggleRow(
+                label = "enable resonance mode",
+                on = state.resonanceEnabled,
+                onToggle = { vm.setResonanceEnabled(it) },
+            )
+            if (state.resonanceEnabled) {
+                Spacer(Modifier.height(10.dp))
+                Text(
+                    text = "default protocol",
+                    color = MytharaColors.FgDim,
+                    style = MaterialTheme.typography.labelSmall,
+                )
+                Spacer(Modifier.height(4.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    listOf("Calm", "Focus", "WindDown").forEach { name ->
+                        val selected = state.resonanceDefaultProtocol == name
+                        Box(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(
+                                    if (selected) MytharaColors.Charple
+                                    else MytharaColors.Surface,
+                                )
+                                .border(
+                                    1.dp,
+                                    if (selected) MytharaColors.Charple else MytharaColors.SurfaceHigh,
+                                    RoundedCornerShape(8.dp),
+                                )
+                                .clickable { vm.setResonanceDefaultProtocol(name) }
+                                .padding(horizontal = 12.dp, vertical = 6.dp),
+                        ) {
+                            Text(
+                                text = name.lowercase(),
+                                color = if (selected) MytharaColors.Fg else MytharaColors.FgMute,
+                                style = MaterialTheme.typography.bodySmall,
+                            )
+                        }
+                    }
+                }
+                Spacer(Modifier.height(10.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        text = "volume cap: ${state.resonanceVolumeCapPercent}%",
+                        color = MytharaColors.FgDim,
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                    Spacer(Modifier.width(10.dp))
+                    Button(
+                        onClick = {
+                            vm.setResonanceVolumeCapPercent(state.resonanceVolumeCapPercent - 5)
+                        },
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = MytharaColors.Surface, contentColor = MytharaColors.Fg,
+                        ),
+                    ) { Text("−") }
+                    Spacer(Modifier.width(4.dp))
+                    Button(
+                        onClick = {
+                            vm.setResonanceVolumeCapPercent(state.resonanceVolumeCapPercent + 5)
+                        },
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = MytharaColors.Surface, contentColor = MytharaColors.Fg,
+                        ),
+                    ) { Text("+") }
+                }
+                Spacer(Modifier.height(10.dp))
+                // Live status — useful for verifying the engine is doing
+                // what we think it's doing without staring at logcat.
+                val es = state.resonanceEngineState
+                val statusLine = "engine: ${es.phase.name.lowercase()} · " +
+                    "${es.mode.name.lowercase()} · " +
+                    "carrier ${es.carrierHz.toInt()}Hz · " +
+                    "beat ${"%.1f".format(es.currentBeatHz)}/${ "%.1f".format(es.targetBeatHz)}Hz · " +
+                    "headphones=${es.routeIsHeadphones}"
+                Text(
+                    text = statusLine,
+                    color = MytharaColors.FgDim,
+                    style = MaterialTheme.typography.bodySmall,
+                )
+                Text(
+                    text = "loop: ${state.resonanceLoopPhase.name.lowercase()}",
+                    color = MytharaColors.FgDim,
+                    style = MaterialTheme.typography.bodySmall,
+                )
+                Spacer(Modifier.height(10.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Button(
+                        onClick = { vm.startResonanceFromApp() },
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = MytharaColors.Charple, contentColor = MytharaColors.Fg,
+                        ),
+                    ) { Text("${Glyph.Check} start") }
+                    Button(
+                        onClick = { vm.stopResonanceFromApp() },
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = MytharaColors.Surface, contentColor = MytharaColors.Fg,
+                        ),
+                    ) { Text("${Glyph.Cross} stop") }
+                }
+            }
         }
 
         Spacer(Modifier.height(14.dp))
