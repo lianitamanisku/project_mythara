@@ -10,6 +10,9 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -37,14 +40,37 @@ class MusicToneEngine @Inject constructor() {
     @Volatile private var playJob: Job? = null
     @Volatile private var track: AudioTrack? = null
 
+    /** "Which motif is playing right now?" — the chat bubble subscribes
+     *  to this so it can light up the corresponding word in sync with
+     *  the audio. [PlaybackState.sourceKey] disambiguates between
+     *  bubbles (each Reply uses its own text as the key); the bubble
+     *  only highlights when the key matches its own.
+     *
+     *  Null whenever nothing is playing (or the playback session
+     *  didn't supply a source key — back-compat with the original
+     *  fire-and-forget overload). */
+    private val _nowPlaying = MutableStateFlow<PlaybackState?>(null)
+    val nowPlaying: StateFlow<PlaybackState?> = _nowPlaying.asStateFlow()
+
+    data class PlaybackState(val sourceKey: String, val motifIndex: Int)
+
+    /** Back-compat overload — plays without emitting any nowPlaying
+     *  state, so callers that don't care about word-sync don't have
+     *  to invent a key. */
+    fun play(motifs: List<Motif>) = play(motifs, sourceKey = "")
+
     /** Play a sequence of motifs back-to-back. The total duration is
      *  [motifs.size] × ([NOTE_DURATION_MS] × notes-per-motif + gap).
-     *  Idempotent: cancels any in-flight playback before starting. */
-    fun play(motifs: List<Motif>) {
+     *  Idempotent: cancels any in-flight playback before starting.
+     *
+     *  When [sourceKey] is non-empty, [nowPlaying] is updated before
+     *  each motif so the chat bubble for that key can highlight the
+     *  matching word in lockstep. */
+    fun play(motifs: List<Motif>, sourceKey: String) {
         if (motifs.isEmpty()) return
         playJob?.cancel()
         playJob = scope.launch {
-            renderSequence(motifs)
+            renderSequence(motifs, sourceKey)
         }
     }
 
@@ -52,13 +78,14 @@ class MusicToneEngine @Inject constructor() {
     fun stop() {
         playJob?.cancel()
         playJob = null
+        _nowPlaying.value = null
         runCatching { track?.pause() }
         runCatching { track?.flush() }
         runCatching { track?.release() }
         track = null
     }
 
-    private fun renderSequence(motifs: List<Motif>) {
+    private fun renderSequence(motifs: List<Motif>, sourceKey: String = "") {
         val sampleRate = SAMPLE_RATE
         val minBuf = AudioTrack.getMinBufferSize(
             sampleRate,
@@ -89,7 +116,13 @@ class MusicToneEngine @Inject constructor() {
         }
 
         // Iterate motif → note → gap and write 16-bit PCM to the track.
+        // Update nowPlaying before each motif so the bubble can light
+        // up the matching word in real time. Skip the publish when
+        // sourceKey is empty (back-compat overload).
         for ((mIdx, motif) in motifs.withIndex()) {
+            if (sourceKey.isNotEmpty()) {
+                _nowPlaying.value = PlaybackState(sourceKey, mIdx)
+            }
             for ((nIdx, freq) in motif.notes.withIndex()) {
                 val hz = freq.coerceIn(MIN_HZ, MAX_HZ)
                 writeNote(t, hz, NOTE_DURATION_MS)
@@ -105,6 +138,7 @@ class MusicToneEngine @Inject constructor() {
             t.release()
         }
         if (track === t) track = null
+        if (sourceKey.isNotEmpty()) _nowPlaying.value = null
     }
 
     private fun writeNote(t: AudioTrack, freqHz: Float, durationMs: Int) {
@@ -166,27 +200,32 @@ class MusicToneEngine @Inject constructor() {
         const val SAMPLE_RATE = 44_100
         private const val CHUNK_SAMPLES = 1024
 
-        /** Per-note duration. Long enough to feel deliberate; short
-         *  enough that a 5-motif reply lands in well under 5 seconds. */
-        const val NOTE_DURATION_MS = 180
+        /** Per-note duration. Slightly longer than the original 180 ms
+         *  so single-tone caveman words have presence and the user
+         *  has time to hear + see the colour-glow association. */
+        const val NOTE_DURATION_MS = 240
 
         /** Silence between consecutive notes within a single motif —
          *  short, so each motif feels like one phrase. */
-        const val INTRA_NOTE_GAP_MS = 35
+        const val INTRA_NOTE_GAP_MS = 50
 
-        /** Silence between motifs — longer, so the listener can hear
-         *  the word-boundary. */
-        const val INTER_MOTIF_GAP_MS = 120
+        /** Silence between motifs — long, so each word's tone phrase
+         *  lands distinctly and the user can mentally map "this tone =
+         *  this word" before the next one starts. The word-glow on
+         *  the chat bubble updates inside this gap. */
+        const val INTER_MOTIF_GAP_MS = 500
 
         /** Raised-cosine envelope window. 12 ms is long enough that
          *  there are no audible clicks at note edges. */
         private const val ATTACK_MS = 12
         private const val RELEASE_MS = 12
 
-        /** Conservative pitch band: low-enough that the lowest motif
-         *  isn't shouty, high-enough that the highest is still
-         *  comfortable in a quiet room. */
-        private const val MIN_HZ = 200f
+        /** Pitch band wide enough to include the OM fundamental
+         *  (136.1 Hz) at the bottom and the 9th harmonic (1224.9 Hz)
+         *  at the top. Below ~120 Hz tones get muddy on phone
+         *  speakers; above ~1500 Hz they start to feel piercing in a
+         *  quiet room. */
+        private const val MIN_HZ = 130f
         private const val MAX_HZ = 1500f
 
         /** Output volume cap. Music Mode runs as USAGE_ASSISTANCE_

@@ -749,20 +749,24 @@ private fun TextBubble(
 }
 
 /** Encode the reply text into a coloured [AnnotatedString] in Music
- *  Mode. Pulls segment colours through [ChatViewModel.composeMusic
- *  Segments] so the View Model owns the encoder reference. Returns
- *  null (and falls back to plain text) until the suspending encode
- *  completes — chat bubbles are typically composed many times before
- *  the user even reads them, and we'd rather show the unstyled
- *  text immediately than show nothing. */
+ *  Mode. Subscribes to the View Model's `musicNowPlaying` so the
+ *  word matching the currently-playing motif gets a translucent
+ *  background glow — visual sync between the tone the user hears
+ *  and the word they see, key to the learning loop.
+ *
+ *  Recomputes whenever the highlight index changes, so the glow
+ *  travels word-by-word across the bubble in lockstep with audio. */
 @Composable
 private fun produceMusicAnnotated(text: String, defaultColor: androidx.compose.ui.graphics.Color): androidx.compose.ui.text.AnnotatedString? {
     val vm: ChatViewModel = androidx.hilt.navigation.compose.hiltViewModel()
+    val nowPlaying by vm.musicNowPlaying.collectAsState()
+    val highlight = nowPlaying?.takeIf { it.sourceKey == text }?.motifIndex
     val state = androidx.compose.runtime.produceState<androidx.compose.ui.text.AnnotatedString?>(
         initialValue = null,
         text,
+        highlight,
     ) {
-        value = vm.composeMusicAnnotated(text, defaultColor.toArgb())
+        value = vm.composeMusicAnnotated(text, defaultColor.toArgb(), highlightMotifIndex = highlight)
     }
     return state.value
 }

@@ -266,12 +266,15 @@ class MusicVocabulary @Inject constructor(
          *  frequency (Hans Cousto's calculation, derived from Earth's
          *  orbital period via successive octave reductions; long
          *  associated with the OM syllable in Indian classical and
-         *  contemporary sound-healing practice). Skipping the
-         *  fundamental (136.1 Hz, below the engine's MIN_HZ band)
-         *  and starting at the 2nd harmonic — every pitch here is
-         *  consonant with every other, since they all sit on the
-         *  natural overtone series of one root.
+         *  contemporary sound-healing practice).
          *
+         *  Includes the fundamental itself so every motif can resolve
+         *  back to the OM tone, plus the 2nd–9th harmonics for upper
+         *  voices. Every pitch here is consonant with every other,
+         *  since they all sit on the natural overtone series of one
+         *  root.
+         *
+         *  1st  136.1 Hz   OM fundamental ॐ
          *  2nd  272.2 Hz   octave above OM
          *  3rd  408.3 Hz   perfect-fifth above the octave
          *  4th  544.4 Hz   two octaves above OM
@@ -281,7 +284,7 @@ class MusicVocabulary @Inject constructor(
          *  8th  1088.8 Hz  three octaves above OM
          *  9th  1224.9 Hz  three octaves + major-second */
         val OM_HARMONICS: List<Float> = listOf(
-            272.2f, 408.3f, 544.4f, 680.5f,
+            136.1f, 272.2f, 408.3f, 544.4f, 680.5f,
             816.6f, 952.7f, 1088.8f, 1224.9f,
         )
 

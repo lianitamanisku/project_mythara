@@ -521,7 +521,9 @@ class ChatViewModel @Inject constructor(
                             val motifs = musicEncoder.encode(turn.finalText)
                                 .map { it.motif }
                                 .filter { it.notes.isNotEmpty() }
-                            if (motifs.isNotEmpty()) musicToneEngine.play(motifs)
+                            if (motifs.isNotEmpty()) {
+                                musicToneEngine.play(motifs, sourceKey = turn.finalText)
+                            }
                         }
                     }
                 }
@@ -546,17 +548,27 @@ class ChatViewModel @Inject constructor(
 
     /** Replay the tone-encoded version of an assistant reply on demand
      *  — the chat bubble's ▶ button. Encodes fresh each time so any
-     *  motif reshapes since the last play are reflected. */
+     *  motif reshapes since the last play are reflected. Uses the
+     *  reply text as the playback source key so the bubble showing
+     *  this reply can subscribe to [musicNowPlaying] and light up
+     *  the matching word in lockstep with the audio. */
     fun replayMusic(text: String) {
         if (text.isBlank()) return
         viewModelScope.launch {
             runCatching {
                 val motifs = musicEncoder.encode(text).map { it.motif }
                     .filter { it.notes.isNotEmpty() }
-                if (motifs.isNotEmpty()) musicToneEngine.play(motifs)
+                if (motifs.isNotEmpty()) {
+                    musicToneEngine.play(motifs, sourceKey = text)
+                }
             }
         }
     }
+
+    /** Direct delegate to the engine's now-playing flow so chat
+     *  bubbles can render the word-glow without depending on
+     *  MusicToneEngine themselves. */
+    val musicNowPlaying = musicToneEngine.nowPlaying
 
     /** Decode-tap feedback. Called when the user reveals an assistant
      *  reply that was hidden in test-me mode: [gotIt] = true means
@@ -586,19 +598,39 @@ class ChatViewModel @Inject constructor(
      *
      *  Returns null on encoder error — the bubble falls back to
      *  plain unstyled text and remains readable. */
-    suspend fun composeMusicAnnotated(text: String, defaultArgb: Int): AnnotatedString? {
+    suspend fun composeMusicAnnotated(
+        text: String,
+        defaultArgb: Int,
+        /** When non-null, the Nth content word in the segment list
+         *  (i.e. the Nth segment whose `motif != null`) is rendered
+         *  with a translucent background glow in the motif's own
+         *  colour — drives the "this colour = this sound = this
+         *  word" learning signal during ▶ replay. */
+        highlightMotifIndex: Int? = null,
+    ): AnnotatedString? {
         if (text.isBlank()) return null
         return runCatching {
             val segments = musicEncoder.renderSegments(text)
+            var motifSeen = 0
             buildAnnotatedString {
                 for (seg in segments) {
-                    val argb = if (seg.motif != null) {
-                        com.mythara.music.MusicColors.colorForMotif(seg.motif)
+                    if (seg.motif != null) {
+                        val argb = com.mythara.music.MusicColors.colorForMotif(seg.motif)
+                        val isHighlighted = (motifSeen == highlightMotifIndex)
+                        motifSeen++
+                        val style = if (isHighlighted) {
+                            SpanStyle(
+                                color = androidx.compose.ui.graphics.Color(argb),
+                                background = androidx.compose.ui.graphics.Color(argb).copy(alpha = 0.32f),
+                            )
+                        } else {
+                            SpanStyle(color = androidx.compose.ui.graphics.Color(argb))
+                        }
+                        withStyle(style) { append(seg.text) }
                     } else {
-                        defaultArgb
-                    }
-                    withStyle(SpanStyle(color = androidx.compose.ui.graphics.Color(argb))) {
-                        append(seg.text)
+                        withStyle(SpanStyle(color = androidx.compose.ui.graphics.Color(defaultArgb))) {
+                            append(seg.text)
+                        }
                     }
                 }
             }
