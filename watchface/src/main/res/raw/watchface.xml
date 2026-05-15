@@ -402,17 +402,23 @@
 
         <!-- Countdown — bold orange, static, always in view in BOTH
              modes. No Variant alpha=0 anywhere; renders identically
-             active + AOD since "in 14 min" is short and self-fits. -->
-        <ComplicationSlot slotId="4" x="55" y="265" width="340" height="24"
+             active + AOD since "in 14 min" is short and self-fits.
+             Sits in the band right below the sun/moon (y=208-256)
+             and above the title slot — no overlap with the AOD time
+             (y=228-286 ambient time is hidden when this strip's
+             reminder content is what we're showing instead, and the
+             non-reminder ambient sequence simply doesn't overlap on
+             pixels in the 263-285 strip). -->
+        <ComplicationSlot slotId="4" x="55" y="263" width="340" height="22"
             supportedTypes="SHORT_TEXT LONG_TEXT EMPTY">
-            <BoundingOval x="0" y="0" width="340" height="24" />
+            <BoundingOval x="0" y="0" width="340" height="22" />
             <DefaultProviderPolicy
                 primaryProvider="com.mythara.debug/com.mythara.wear.complications.ReminderCountdownComplicationService"
                 primaryProviderType="SHORT_TEXT"
                 defaultSystemProvider="WATCH_BATTERY"
                 defaultSystemProviderType="SHORT_TEXT" />
             <Complication type="SHORT_TEXT">
-                <PartText x="0" y="0" width="340" height="24">
+                <PartText x="0" y="0" width="340" height="22">
                     <Text align="CENTER" maxLines="1">
                         <Font family="jetbrains_mono_regular" size="16" weight="BOLD" color="#ffffb000">
                             <Template><![CDATA[⏰ %s]]><Parameter expression="[COMPLICATION.TEXT]" /></Template>
@@ -421,7 +427,7 @@
                 </PartText>
             </Complication>
             <Complication type="LONG_TEXT">
-                <PartText x="0" y="0" width="340" height="24">
+                <PartText x="0" y="0" width="340" height="22">
                     <Text align="CENTER" maxLines="1">
                         <Font family="jetbrains_mono_regular" size="16" weight="BOLD" color="#ffffb000">
                             <Template><![CDATA[⏰ %s]]><Parameter expression="[COMPLICATION.TEXT]" /></Template>
@@ -432,22 +438,25 @@
             <Complication type="EMPTY" />
         </ComplicationSlot>
 
-        <!-- Title — slot tall enough to wrap multi-line in AOD, while
-             active mode renders only the top-line marquee. Two
-             PartText siblings inside each Complication: the marquee
-             one is visible in active + hidden in AOD; the wrap one
-             is hidden in active + visible in AOD. Same complication
-             text feeds both. -->
-        <ComplicationSlot slotId="5" x="20" y="291" width="410" height="80"
+        <!-- Title — slot occupies a 48px band right under the
+             countdown. In active mode the inner marquee renders the
+             top 20px line; in AOD a separate static PartText wraps
+             the title across up to 2 lines (font 13 ≈ 17px line
+             height = ~34px content, fits in 48px slot). Two PartText
+             siblings inside each Complication: marquee = active-only
+             (alpha 0 in AOD), wrap = AOD-only (alpha 0 in active).
+             Same complication text feeds both. Slot bbox no longer
+             overlaps slot 1 (insight) or the PTT triangle. -->
+        <ComplicationSlot slotId="5" x="20" y="287" width="410" height="48"
             supportedTypes="SHORT_TEXT LONG_TEXT EMPTY">
-            <BoundingOval x="0" y="0" width="410" height="80" />
+            <BoundingOval x="0" y="0" width="410" height="48" />
             <DefaultProviderPolicy
                 primaryProvider="com.mythara.debug/com.mythara.wear.complications.ReminderTitleComplicationService"
                 primaryProviderType="LONG_TEXT"
                 defaultSystemProvider="WATCH_BATTERY"
                 defaultSystemProviderType="SHORT_TEXT" />
             <Complication type="SHORT_TEXT">
-                <!-- Active: marquee single-line in top of slot. -->
+                <!-- Active: marquee single-line at top of the band. -->
                 <PartText x="0" y="0" width="900" height="20">
                     <Variant mode="AMBIENT" target="alpha" value="0" />
                     <Transform target="x" value="0 - (([SECOND] * 8) % 700)" />
@@ -457,10 +466,13 @@
                         </Font>
                     </Text>
                 </PartText>
-                <!-- AOD: full multi-line wrap, centered, fills slot. -->
-                <PartText x="0" y="0" width="410" height="80" alpha="0">
+                <!-- AOD: wrap up to 2 lines, centered, fills the band
+                     (no marquee — AOD blocks animation). Longer text
+                     truncates; the active mode shows the full title
+                     via marquee. -->
+                <PartText x="0" y="0" width="410" height="48" alpha="0">
                     <Variant mode="AMBIENT" target="alpha" value="255" />
-                    <Text align="CENTER" maxLines="4">
+                    <Text align="CENTER" maxLines="2">
                         <Font family="jetbrains_mono_regular" size="13" color="#ffffb000">
                             <Template><![CDATA[%s]]><Parameter expression="[COMPLICATION.TEXT]" /></Template>
                         </Font>
@@ -477,9 +489,9 @@
                         </Font>
                     </Text>
                 </PartText>
-                <PartText x="0" y="0" width="410" height="80" alpha="0">
+                <PartText x="0" y="0" width="410" height="48" alpha="0">
                     <Variant mode="AMBIENT" target="alpha" value="255" />
-                    <Text align="CENTER" maxLines="4">
+                    <Text align="CENTER" maxLines="2">
                         <Font family="jetbrains_mono_regular" size="13" color="#ffffb000">
                             <Template><![CDATA[%s]]><Parameter expression="[COMPLICATION.TEXT]" /></Template>
                         </Font>
@@ -494,30 +506,32 @@
              which the phone refreshes over the Data Layer with the latest
              agent chat message (kept in sync with the app). Replaces the
              old hard-coded terminal line. Hidden in ambient. -->
-        <ComplicationSlot slotId="1" x="55" y="312" width="340" height="44"
+        <ComplicationSlot slotId="1" x="55" y="337" width="340" height="22"
             supportedTypes="SHORT_TEXT LONG_TEXT EMPTY">
-            <BoundingOval x="0" y="0" width="340" height="44" />
+            <BoundingOval x="0" y="0" width="340" height="22" />
             <DefaultProviderPolicy
                 primaryProvider="com.mythara.debug/com.mythara.wear.complications.InsightComplicationService"
                 primaryProviderType="LONG_TEXT"
                 defaultSystemProvider="WATCH_BATTERY"
                 defaultSystemProviderType="SHORT_TEXT" />
-            <!-- Bright neon-green terminal line. A block cursor blinks
-                 every second for a live typewriter feel (true per-char
-                 reveal isn't expressible in WFF, so a blinking cursor
-                 stands in). Two Conditions toggle the cursor glyph
-                 between "|" and a same-width space so the centred text
-                 doesn't jitter; wrapped in a Group so the Complication
-                 child set stays valid. -->
+            <!-- Bright neon-green terminal line — single-line marquee
+                 sandwiched between the title slot and the PTT
+                 triangle. A block cursor blinks every second for a
+                 live typewriter feel (true per-char reveal isn't
+                 expressible in WFF, so a blinking cursor stands in).
+                 Two Conditions toggle the cursor glyph between "|"
+                 and a same-width space so the marquee text doesn't
+                 jitter; wrapped in a Group so the Complication child
+                 set stays valid. Hidden entirely in AOD. -->
             <Complication type="SHORT_TEXT">
-                <Group x="0" y="0" width="340" height="44" name="agent_short">
+                <Group x="0" y="0" width="340" height="22" name="agent_short">
                     <Variant mode="AMBIENT" target="alpha" value="0" />
                     <Condition>
                         <Expressions>
                             <Expression name="agent_cursor_on_s">[SECOND] % 2 == 0</Expression>
                         </Expressions>
                         <Compare expression="agent_cursor_on_s">
-                            <PartText x="0" y="0" width="900" height="44" alpha="255">
+                            <PartText x="0" y="0" width="900" height="22" alpha="255">
                                 <Transform target="x" value="0 - (([SECOND] * 8) % 700)" />
                                 <Text align="START" maxLines="1">
                                     <Font family="jetbrains_mono_regular" size="14" color="#ff39ff14">
@@ -532,7 +546,7 @@
                             <Expression name="agent_cursor_off_s">[SECOND] % 2 == 1</Expression>
                         </Expressions>
                         <Compare expression="agent_cursor_off_s">
-                            <PartText x="0" y="0" width="900" height="44" alpha="255">
+                            <PartText x="0" y="0" width="900" height="22" alpha="255">
                                 <Transform target="x" value="0 - (([SECOND] * 8) % 700)" />
                                 <Text align="START" maxLines="1">
                                     <Font family="jetbrains_mono_regular" size="14" color="#ff39ff14">
@@ -545,14 +559,14 @@
                 </Group>
             </Complication>
             <Complication type="LONG_TEXT">
-                <Group x="0" y="0" width="340" height="44" name="agent_long">
+                <Group x="0" y="0" width="340" height="22" name="agent_long">
                     <Variant mode="AMBIENT" target="alpha" value="0" />
                     <Condition>
                         <Expressions>
                             <Expression name="agent_cursor_on_l">[SECOND] % 2 == 0</Expression>
                         </Expressions>
                         <Compare expression="agent_cursor_on_l">
-                            <PartText x="0" y="0" width="900" height="44" alpha="255">
+                            <PartText x="0" y="0" width="900" height="22" alpha="255">
                                 <Transform target="x" value="0 - (([SECOND] * 8) % 700)" />
                                 <Text align="START" maxLines="1">
                                     <Font family="jetbrains_mono_regular" size="14" color="#ff39ff14">
@@ -567,7 +581,7 @@
                             <Expression name="agent_cursor_off_l">[SECOND] % 2 == 1</Expression>
                         </Expressions>
                         <Compare expression="agent_cursor_off_l">
-                            <PartText x="0" y="0" width="900" height="44" alpha="255">
+                            <PartText x="0" y="0" width="900" height="22" alpha="255">
                                 <Transform target="x" value="0 - (([SECOND] * 8) % 700)" />
                                 <Text align="START" maxLines="1">
                                     <Font family="jetbrains_mono_regular" size="14" color="#ff39ff14">
