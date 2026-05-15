@@ -202,32 +202,39 @@ class MusicVocabulary @Inject constructor(
         }
     }
 
-    /** Deterministic motif minter with **uniqueness guarantee**. Each
-     *  token gets a fresh signature that doesn't already exist in
-     *  the vocabulary — without this, two different words could hash
-     *  onto the same note pattern and become indistinguishable to
-     *  the listener (defeats the whole point of a learnable
-     *  language). The dictionary IS the source of truth: cache
-     *  contents define what's "taken."
+    /** Deterministic motif minter with **uniqueness guarantee** AND
+     *  a **phonetic first attempt**. Each token gets a fresh
+     *  signature that doesn't already exist in the vocabulary; the
+     *  FIRST signature we try is derived from the word's own
+     *  English vowels (see [VOWEL_TO_OM]) so the tone has an
+     *  audible relationship to the word that helps the user learn.
+     *  Examples:
+     *
+     *    "om"     → /o/                 → [136.1]                 (pure OM)
+     *    "yes"    → /e/                 → [680.5]                 (bright)
+     *    "you"    → /o/, /u/            → [136.1, 544.4]          (deep+warm)
+     *    "hello"  → /e/, /o/            → [680.5, 136.1]          (bright→deep)
+     *
+     *  If the vowel-based candidate collides with another token's
+     *  signature (e.g. both "go" and "no" boil down to /o/), we fall
+     *  back to the salted-hash retry path. So the dictionary stays
+     *  unique while still leaning into phonetic similarity where
+     *  possible. Reshapes of the same word (generation > 0) skip
+     *  the vowel-first attempt directly so they explore fresh
+     *  patterns.
      *
      *  Algorithm:
      *  1. Compute the user's tier from current cache size.
-     *  2. For salts 0..N-1 at this tier, generate a candidate note
-     *     pattern via stable hash. If its signature is fresh
-     *     (not in the existing-signatures set), use it.
-     *  3. If we've exhausted reasonable salt attempts at this tier,
-     *     escalate to the next tier (one more note) and retry. The
-     *     OM_HARMONICS-sized scale gives 9^tier combinations, so
-     *     escalation is the genuine right answer once a tier is
-     *     full — the user has earned a complexity bump.
-     *  4. Ultimate fallback: append unique salts directly to the
-     *     pattern. Should never trigger in practice (tier-5 alone
-     *     is 9^5 = 59049 unique motifs).
-     *
-     *  Reshaped motifs (generation > 0) are still allowed to
-     *  collide with their own previous generation — a word being
-     *  re-learned with a fresh pattern is the same dictionary slot.
-     *  We exclude THIS key from the collision set. */
+     *  2. (gen 0 only) Try vowel-derived notes truncated/padded to
+     *     `tier` length. Accept if fresh.
+     *  3. For salts 0..N-1 at this tier, generate a candidate via
+     *     stable hash. Accept if fresh.
+     *  4. If exhausted at this tier, escalate to the next tier and
+     *     retry — first with vowel-derived notes at the bigger
+     *     count (more of the word's phonemes get encoded), then
+     *     salted hash.
+     *  5. Ultimate fallback: highest-tier base pattern. Should
+     *     never trigger in practice (tier-5 alone is 9^5 unique). */
     private fun mintMotif(key: String, generation: Int): Motif {
         val baseTier = notesPerMotifFor(cache.size).coerceIn(1, MAX_NOTES_PER_MOTIF)
         val existing: Set<String> = cache.entries
@@ -236,6 +243,14 @@ class MusicVocabulary @Inject constructor(
             .toSet()
 
         for (tier in baseTier..MAX_NOTES_PER_MOTIF) {
+            // Phonetic first attempt — only at gen 0; reshapes
+            // explicitly want a fresh non-phonetic pattern.
+            if (generation == 0) {
+                val phonetic = vowelDerivedNotes(key, tier)
+                if (phonetic != null && motifSignature(phonetic) !in existing) {
+                    return Motif(notes = phonetic, hits = 0, misses = 0, generation = 0)
+                }
+            }
             val possible = pow9(tier)
             val budget = (possible.coerceAtMost(MAX_SALT_ATTEMPTS_PER_TIER.toLong())).toInt()
             for (salt in 0 until budget) {
@@ -247,18 +262,35 @@ class MusicVocabulary @Inject constructor(
             }
         }
 
-        // Should be unreachable for any realistic vocabulary —
-        // 9^5 = 59049 unique tier-5 motifs. Fall back to the
-        // unsalted base pattern at the highest tier so we always
-        // return SOMETHING; the dictionary just won't be unique
-        // at this point and the caller is into pathological
-        // territory anyway.
         Log.w(TAG, "vocabulary exhausted minting '$key' — collision possible")
         val seed = stableHash("$key|$generation")
         return Motif(
             notes = pickNotes(seed, MAX_NOTES_PER_MOTIF),
             hits = 0, misses = 0, generation = generation,
         )
+    }
+
+    /** Extract the [count] most-representative vowels from [key] and
+     *  map each to its OM-harmonic neighbour. Returns null if the
+     *  token has no vowels at all (e.g. "x", "vs") — those fall
+     *  through to the hash path so they still get a tone, just not
+     *  a phonetic one.
+     *
+     *  When the token has more vowels than [count], we take the
+     *  first [count] in order (the first phonemes are what the
+     *  listener hears first and best correlates with the spelling).
+     *  When it has fewer, we pad with the LAST vowel — a
+     *  one-vowel word like "om" at tier 3 becomes [/o/, /o/, /o/],
+     *  a sustained OM motif that feels right for words centred on
+     *  a single phoneme. */
+    private fun vowelDerivedNotes(key: String, count: Int): List<Float>? {
+        val vowels = key.mapNotNull { ch -> VOWEL_TO_OM[ch] }
+        if (vowels.isEmpty()) return null
+        val out = ArrayList<Float>(count)
+        for (i in 0 until count) {
+            out.add(vowels[if (i < vowels.size) i else vowels.size - 1])
+        }
+        return out
     }
 
     private fun pickNotes(seed: Long, count: Int): List<Float> =
@@ -382,6 +414,36 @@ class MusicVocabulary @Inject constructor(
          *  this is taking long enough that bumping the tier is
          *  cheaper than continuing to search. */
         private const val MAX_SALT_ATTEMPTS_PER_TIER = 256
+
+        /** English vowel → OM-harmonic mapping. Each vowel gets the
+         *  harmonic that best matches its acoustic character — high
+         *  front vowels (i) sit at the bright end of the spectrum,
+         *  back round vowels (o, u) sit at the deep end. Crucially
+         *  'o' maps to the 136.1 Hz OM fundamental itself: a word
+         *  like "om" or "go" or "no" rings on the actual Sanskrit
+         *  OM tone, which is the kind of phonetic resonance that
+         *  makes the language feel like it's spelling itself.
+         *
+         *  Consulted on a word's first encounter so the tone has an
+         *  immediate audible relationship to the word; falls back
+         *  to hash-salted retries if a phonetic candidate would
+         *  collide with another already-minted word. The dictionary
+         *  stays unique while leaning into phonetic similarity
+         *  wherever possible.
+         *
+         *  This is the seed of the evolving language — the user's
+         *  intuition learns "/o/ = deep tone" naturally because
+         *  every "o"-word resonates on the OM, and so on. Future
+         *  iterations can layer richer phonetics (consonants,
+         *  diphthongs, stress) on top of this foundation. */
+        val VOWEL_TO_OM: Map<Char, Float> = mapOf(
+            'a' to 408.3f,      // open central — 3rd harmonic, resonant
+            'e' to 680.5f,      // mid front — 5th, bright
+            'i' to 1088.8f,     // high front — 8th, piercing top
+            'o' to 136.1f,      // back round — OM fundamental, deep
+            'u' to 544.4f,      // high back — 4th, warm
+            'y' to 952.7f,      // i-like vowel use — 7th, edge-bright
+        )
 
         private val NON_WORD = Regex("[^\\p{L}\\p{Nd}]+")
     }
