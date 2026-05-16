@@ -61,6 +61,9 @@ fun SettingsScreen(
     onBack: () -> Unit,
     onOpenAbout: () -> Unit = {},
     onOpenPeople: () -> Unit = {},
+    /** Navigator to the full-screen audit viewer (Phase K). Surfaced
+     *  from the AuditLogPanel's "view full" link. */
+    onOpenAudit: () -> Unit = {},
     vm: SettingsViewModel = hiltViewModel(),
 ) {
     val state by vm.state.collectAsState()
@@ -428,7 +431,7 @@ fun SettingsScreen(
         MessageImportPanel()
 
         Spacer(Modifier.height(16.dp))
-        AuditLogPanel()
+        AuditLogPanel(onOpenFull = onOpenAudit)
 
         Spacer(Modifier.height(16.dp))
         RestrictedAppsPanel()

@@ -284,6 +284,7 @@ fun MytharaRoot(
                                     onBack = { nav.popBackStack() },
                                     onOpenAbout = { nav.navigate(Routes.About) },
                                     onOpenPeople = { nav.navigate(Routes.People) },
+                                    onOpenAudit = { nav.navigate(Routes.Audit) },
                                 )
                             }
                             composable(Routes.People) {
@@ -342,6 +343,13 @@ fun MytharaRoot(
                                 // structured input back from via the
                                 // window.mythara JS bridge.
                                 com.mythara.ui.canvas.CanvasScreen(onBack = { nav.popBackStack() })
+                            }
+                            composable(Routes.Audit) {
+                                // Full-screen audit-log deep-dive
+                                // (Phase K) — search, filters, stats,
+                                // expandable rows. Companion to the
+                                // bounded AuditLogPanel in Settings.
+                                com.mythara.ui.audit.AuditScreen(onBack = { nav.popBackStack() })
                             }
                             composable(Routes.Dashboard) {
                                 // Compact-mode Dashboard — the same
@@ -601,6 +609,10 @@ object Routes {
      *  HTML/JS/canvas content into, with a JS bridge for receiving
      *  user input back. See [com.mythara.ui.canvas.CanvasScreen]. */
     const val Canvas = "canvas"
+
+    /** Full-screen audit-log viewer with search + filters + stats.
+     *  Reachable from Settings → audit log panel → "view full". */
+    const val Audit = "audit"
 }
 
 /** Hilt accessor for plain composables (no ViewModel) — lets the

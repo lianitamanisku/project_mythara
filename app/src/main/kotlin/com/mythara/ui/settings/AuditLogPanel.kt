@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -84,7 +85,10 @@ class AuditLogViewModel @Inject constructor(
  *   No surprises, no untraceable side effects.
  */
 @Composable
-fun AuditLogPanel(vm: AuditLogViewModel = hiltViewModel()) {
+fun AuditLogPanel(
+    onOpenFull: (() -> Unit)? = null,
+    vm: AuditLogViewModel = hiltViewModel(),
+) {
     val entries by vm.entries.collectAsState()
     val localDeviceId by vm.localDeviceId.collectAsState()
     var confirmClear by remember { mutableStateOf(false) }
@@ -144,8 +148,23 @@ fun AuditLogPanel(vm: AuditLogViewModel = hiltViewModel()) {
         Spacer(Modifier.height(10.dp))
         Row(
             modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.End,
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
         ) {
+            // "view full" link — opens the dedicated AuditScreen
+            // with search + filters + stats + expandable rows.
+            // Elided when the host doesn't pass a navigator.
+            if (onOpenFull != null) {
+                TextButton(onClick = onOpenFull) {
+                    Text(
+                        text = "${Glyph.DiamondOutline} view full audit  ${Glyph.Arrow}",
+                        color = MytharaColors.Charple,
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                }
+            } else {
+                Spacer(Modifier.width(1.dp))
+            }
             TextButton(
                 onClick = { confirmClear = true },
                 enabled = entries.isNotEmpty(),
