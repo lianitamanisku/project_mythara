@@ -209,7 +209,24 @@ fun MytharaRoot(
                     androidx.compose.foundation.layout.Column(
                         modifier = Modifier.fillMaxSize(),
                     ) {
-                    MytharaStatusBar(onOpenAboutMe = { nav.navigate(Routes.AboutMe) })
+                    MytharaStatusBar(
+                        // In-app pill ALSO uses the black-zone
+                        // wrapper now so the visual continuity
+                        // between the overlay and the in-app
+                        // surface is preserved (same height,
+                        // same cutout-hiding bar). User's spec:
+                        // "move it up and turn the complete
+                        // upper portion black".
+                        blackZoneHeightDp = com.mythara.ui.system.OVERLAY_BLACK_ZONE_HEIGHT_DP,
+                        onRoseTap = {
+                            nav.navigate(Routes.Chat) {
+                                launchSingleTop = true
+                                popUpTo(Routes.Chat) { inclusive = false }
+                            }
+                        },
+                        onOpenAboutMe = { nav.navigate(Routes.AboutMe) },
+                        onOpenUsage = { nav.navigate(Routes.Usage) },
+                    )
                     Box(
                         modifier = Modifier
                             .fillMaxSize()

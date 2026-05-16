@@ -112,21 +112,31 @@ fun MytharaStatusBar(
     modifier: Modifier = Modifier,
     onOpenAboutMe: () -> Unit = {},
     /**
-     * When true, the pill is hard-locked to the EXPANDED state —
-     * full-width with all status indicators visible from first
-     * paint, no collapse on tap, no auto-collapse timer. Used by
-     * [com.mythara.services.LockscreenIslandService] so the
-     * over-other-apps overlay shows the full status pill at all
-     * times (the user explicitly asked for this: "the status pill
-     * must be visible over other apps instead of the current
-     * one"). The rose still spins on tap; only the collapse
-     * toggle is suppressed.
-     *
-     * The in-app surface leaves this at its default false so the
-     * pill keeps the iPhone-style collapse / tap-to-expand UX
-     * inside Mythara itself.
+     * Tap-on-rose action. Per user spec: "clicking on the star
+     * in that pill must open the Mythara chat screen from
+     * wherever it is clicked, even if on another app." The
+     * overlay variant routes this through MainActivity + the
+     * EXTRA_OPEN_ROUTE deep-link; the in-app variant navigates
+     * the local NavController to Routes.Chat.
      */
-    alwaysExpanded: Boolean = false,
+    onRoseTap: () -> Unit = {},
+    /**
+     * Tap on the M● / I● API health dots opens the Usage
+     * screen so the user can see the underlying call stats /
+     * MiniMax sign-in.
+     */
+    onOpenUsage: () -> Unit = {},
+    /**
+     * When > 0, the pill is wrapped in a SOLID BLACK rectangle
+     * of this dp height at the very top of the screen — turns
+     * the entire upper portion black per user spec ("move it
+     * up and turn the complete upper portion black"). The
+     * camera cutout sits BEHIND this rectangle and disappears
+     * into the black; the pill is centred vertically inside.
+     * 0 (default) keeps the in-app pill on transparent bg with
+     * the wallpaper visible behind it.
+     */
+    blackZoneHeightDp: Int = 0,
 ) {
     val ctx = LocalContext.current
 
@@ -234,13 +244,12 @@ fun MytharaStatusBar(
     //
     // Auto-collapse after AUTO_COLLAPSE_MS so a user who taps to
     // glance doesn't have to tap again to reclaim the space.
-    // `alwaysExpanded` clamps the state — overlay host wants the
-    // full pill at all times; in-app host wants the user-toggled
-    // collapse / expand behaviour. Either way the local state
-    // variable still exists so the rose-spin animation and the
-    // width-fraction animateFloatAsState below stay uniform
-    // across both code paths.
-    var expanded by remember { mutableStateOf(alwaysExpanded) }
+    // Pill always boots MINIMIZED — small rose + MYTHARA only.
+    // Tap expands, auto-collapses after AUTO_COLLAPSE_MS of no
+    // further interaction. Per user spec "must always stay
+    // minimized view default, expand on click and then auto
+    // close in 5 seconds if no action."
+    var expanded by remember { mutableStateOf(false) }
     val widthFraction by animateFloatAsState(
         targetValue = if (expanded) 1f else COLLAPSED_WIDTH_FRACTION,
         animationSpec = tween(
@@ -259,12 +268,8 @@ fun MytharaStatusBar(
     // toggled (LaunchedEffect cancels + relaunches on key
     // change). Tap during the expanded window resets to a fresh
     // window via the user.
-    LaunchedEffect(expanded, alwaysExpanded) {
-        // Skip the auto-collapse timer when the host wants
-        // always-expanded — that's the explicit contract for the
-        // overlay (visible status pill in every foreground
-        // context).
-        if (expanded && !alwaysExpanded) {
+    LaunchedEffect(expanded) {
+        if (expanded) {
             kotlinx.coroutines.delay(AUTO_COLLAPSE_MS)
             expanded = false
         }
@@ -277,12 +282,10 @@ fun MytharaStatusBar(
     val scope = rememberCoroutineScope()
     val rotation = remember { androidx.compose.animation.core.Animatable(0f) }
     val pulseScale = remember { androidx.compose.animation.core.Animatable(1f) }
-    val onPillTap: () -> Unit = {
-        // Toggle collapse only when the host allows it; when
-        // alwaysExpanded the rose still spins on tap but the
-        // pill stays full-width (overlay contract — see
-        // alwaysExpanded param doc).
-        if (!alwaysExpanded) expanded = !expanded
+    // Reusable spin + scale-pulse on rose. Triggered by both
+    // pill-tap (expand/collapse) AND rose-tap (open chat) so
+    // either interaction still gives the brand-mark feedback.
+    val spinRose: () -> Unit = {
         DynamicIslandSink.clear()
         scope.launch {
             rotation.snapTo(0f)
@@ -301,14 +304,36 @@ fun MytharaStatusBar(
             pulseScale.animateTo(1f, androidx.compose.animation.core.tween(220))
         }
     }
+    val onPillTap: () -> Unit = {
+        expanded = !expanded
+        spinRose()
+    }
 
     // ───── Pill layout ─────
+    //
+    // Outer Box layering:
+    //   - When blackZoneHeightDp > 0 (overlay mode), the outer
+    //     Box has a SOLID BLACK background filling the top
+    //     blackZoneHeightDp dp of the screen — covers the camera
+    //     cutout so it visually disappears into the bar.
+    //   - When blackZoneHeightDp == 0 (in-app mode default),
+    //     the outer Box is transparent + heightless, the pill
+    //     just floats below the cutout via safeTopDp.
     val pillBg = Color(0xCC000000)
-    Box(
-        modifier = modifier
+    val hasBlackZone = blackZoneHeightDp > 0
+    val outerMod = if (hasBlackZone) {
+        modifier
             .fillMaxWidth()
-            .padding(top = safeTopDp.dp),
-        contentAlignment = Alignment.TopCenter,
+            .height(blackZoneHeightDp.dp)
+            .background(Color.Black)
+    } else {
+        modifier
+            .fillMaxWidth()
+            .padding(top = safeTopDp.dp)
+    }
+    Box(
+        modifier = outerMod,
+        contentAlignment = if (hasBlackZone) Alignment.Center else Alignment.TopCenter,
     ) {
         Row(
             modifier = Modifier
@@ -328,10 +353,25 @@ fun MytharaStatusBar(
             // (matches the previous full-bar layout).
             horizontalArrangement = Arrangement.spacedBy(if (expanded) 33.dp else 12.dp),
         ) {
-            // ROSE — always visible. Rotation + scale come from
-            // the shared animation state above so the spin fires
-            // on every tap (collapse OR expand).
-            Box(modifier = Modifier.scale(pulseScale.value)) {
+            // ROSE — always visible. Has its OWN clickable that
+            // consumes the tap before the outer pill click sees
+            // it, so a rose tap fires spin + onRoseTap (open
+            // Mythara chat) WITHOUT toggling the pill's expand
+            // state. Per user spec "clicking on the star in that
+            // pill must open the Mythara chat screen from wherever
+            // it is clicked, even if on another app."
+            Box(
+                modifier = Modifier
+                    .scale(pulseScale.value)
+                    .clickable(
+                        interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() },
+                        indication = null,
+                        onClick = {
+                            spinRose()
+                            onRoseTap()
+                        },
+                    ),
+            ) {
                 RoseMarkSmallSpinning(
                     sizeDp = ROSE_DP,
                     rotationDeg = rotation.value,
@@ -357,8 +397,30 @@ fun MytharaStatusBar(
                         fontWeight = FontWeight.Medium,
                     )
                     SignalDots(litCount = network.bars, accent = SIGNAL_COLOR)
-                    HealthDot(label = "M", health = minimaxHealth, accent = MINIMAX_COLOR)
-                    HealthDot(label = "I", health = imageHealth, accent = IMAGE_COLOR)
+                    // M / I health dots — wrapped in clickable
+                    // boxes so tapping either one routes to the
+                    // Usage screen (where the user can see call
+                    // stats + re-sign-in to MiniMax). Each tap
+                    // consumes the event so the outer pill click
+                    // doesn't ALSO collapse.
+                    Box(
+                        modifier = Modifier.clickable(
+                            interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() },
+                            indication = null,
+                            onClick = onOpenUsage,
+                        ),
+                    ) {
+                        HealthDot(label = "M", health = minimaxHealth, accent = MINIMAX_COLOR)
+                    }
+                    Box(
+                        modifier = Modifier.clickable(
+                            interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() },
+                            indication = null,
+                            onClick = onOpenUsage,
+                        ),
+                    ) {
+                        HealthDot(label = "I", health = imageHealth, accent = IMAGE_COLOR)
+                    }
                     MeAvatar(onClick = onOpenAboutMe)
                     PttButton()
                     Text(
@@ -726,9 +788,20 @@ private const val EXPAND_DURATION_MS = 350
 
 /** Auto-collapse delay. The user taps to glance at the status
  *  chrome; after this many ms with no further interaction we
- *  shrink back to the small pill on our own. 6s is a typical
- *  "scan-and-look-away" window. */
-private const val AUTO_COLLAPSE_MS = 6_000L
+ *  shrink back to the small pill on our own. 5s per user spec
+ *  ("auto close in 5 seconds if no action"). */
+private const val AUTO_COLLAPSE_MS = 5_000L
+
+/** Black-zone height (dp) used by the overlay variant to wrap
+ *  the pill in a solid black rectangle at the top of the
+ *  screen, hiding the camera cutout. Sized to comfortably
+ *  contain the 30dp STRIP_HEIGHT_DP pill PLUS the Pixel 10
+ *  Pro's cutout extent (~26dp from top) with a few dp of
+ *  visual breathing room. 40dp lands cleanly: pill centered
+ *  at y=5-35dp, cutout (12-26dp from top) sits inside the
+ *  pill's vertical span, all hidden behind the solid black
+ *  bg layer. */
+const val OVERLAY_BLACK_ZONE_HEIGHT_DP = 40
 private const val SIGNAL_BAR_COUNT = 4
 private const val BATTERY_ICON_DP = 16
 private const val ME_AVATAR_DP = 18

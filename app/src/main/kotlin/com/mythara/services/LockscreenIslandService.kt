@@ -197,8 +197,16 @@ class LockscreenIslandService : Service() {
         // reach the underlying app. Acceptable because the pill
         // is small and the alternative (WRAP_CONTENT width with
         // updateViewLayout calls every expand) is heavier.
-        val flags = WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
-            WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
+        // FLAG_NOT_FOCUSABLE was dropped — keeping it blocked
+        // ComposeView's pointer-input from receiving touches
+        // even with FLAG_NOT_TOUCH_MODAL allowing pass-through.
+        // Without FLAG_NOT_FOCUSABLE the overlay can take input
+        // focus when the user taps it (which is what we want
+        // for clicks to fire), and FLAG_NOT_TOUCH_MODAL still
+        // lets touches OUTSIDE the window's bounds fall through
+        // to the underlying app — so scrolling Reddit while
+        // the overlay floats above still works.
+        val flags = WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
             WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS or
             WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
             WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED
@@ -215,7 +223,24 @@ class LockscreenIslandService : Service() {
         }
 
         val view = ComposeView(this).apply {
-            setViewCompositionStrategy(ViewCompositionStrategy.DisposeOnViewTreeLifecycleDestroyed)
+            // Critical for overlay-hosted ComposeView: the
+            // default ViewCompositionStrategy expects the view to
+            // be attached to a normal view tree which has a
+            // window-scoped Recomposer. WindowManager.addView
+            // doesn't create that scope, so Compose's pointer
+            // input dispatching falls back to a stub that NEVER
+            // delivers MotionEvents to clickable {} / pointerInput
+            // — which is why earlier overlay taps appeared dead.
+            //
+            // DisposeOnDetachedFromWindowOrReleasedFromPool builds
+            // a local Recomposer tied to the View's own lifecycle,
+            // which IS active for WindowManager-managed views.
+            // With this strategy + the ComposeOwner lifecycle
+            // attached below, click handlers inside the overlay
+            // finally fire on tap.
+            setViewCompositionStrategy(
+                ViewCompositionStrategy.DisposeOnDetachedFromWindowOrReleasedFromPool,
+            )
             setContent {
                 MytharaTheme {
                     // The overlay hosts the SAME consolidated
@@ -232,16 +257,29 @@ class LockscreenIslandService : Service() {
                     // of the current one. The status must be
                     // the new overlay").
                     com.mythara.ui.system.MytharaStatusBar(
-                        alwaysExpanded = true,
+                        // Black-zone wrapper: solid black bar
+                        // at the top, height = 40dp, hides the
+                        // camera cutout behind it. Pill sits
+                        // centered inside.
+                        blackZoneHeightDp = com.mythara.ui.system.OVERLAY_BLACK_ZONE_HEIGHT_DP,
+                        onRoseTap = {
+                            // Star → open chat. Deep-link via
+                            // MainActivity + EXTRA_OPEN_ROUTE.
+                            val intent = Intent(this@LockscreenIslandService, MainActivity::class.java)
+                                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                                .putExtra(EXTRA_OPEN_ROUTE, "chat")
+                            runCatching { startActivity(intent) }
+                        },
                         onOpenAboutMe = {
-                            // From overlay context the activity
-                            // isn't on the back stack — launch
-                            // a fresh task and let MainActivity
-                            // route to AboutMe via the deep-link
-                            // intent extra.
                             val intent = Intent(this@LockscreenIslandService, MainActivity::class.java)
                                 .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                                 .putExtra(EXTRA_OPEN_ROUTE, "about-me")
+                            runCatching { startActivity(intent) }
+                        },
+                        onOpenUsage = {
+                            val intent = Intent(this@LockscreenIslandService, MainActivity::class.java)
+                                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                                .putExtra(EXTRA_OPEN_ROUTE, "usage")
                             runCatching { startActivity(intent) }
                         },
                     )
