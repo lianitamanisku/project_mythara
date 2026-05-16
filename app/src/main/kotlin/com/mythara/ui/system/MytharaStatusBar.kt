@@ -168,52 +168,60 @@ fun MytharaStatusBar(
     // a single centred pill.
     val cutout = rememberCutoutRect()
 
-    // Top padding strategy — iPhone-style, NOT push-below-cutout.
+    // Top padding strategy — strip pinned to the very TOP of the
+    // screen per user request ("move it all the way up"). The
+    // previous version centered the strip's vertical midpoint on
+    // the cutout, which still felt low because the strip's box
+    // had to extend ABOVE that midpoint by STRIP_HEIGHT/2 — so
+    // when the cutout's center was near 20dp the strip's top edge
+    // landed at 0dp anyway, giving the illusion of "below" because
+    // the bg fill stopped at strip bottom (~88dp on the 3x pill).
     //
-    // The previous version padded the strip's TOP to cutout.bottom,
-    // which pushed the entire status row 30+ dp from the screen
-    // edge — way below the cutout. That looked wrong because the
-    // clock + battery were sitting BELOW the camera hole, instead
-    // of beside it.
-    //
-    // The correct model is: the strip's VERTICAL CENTER aligns
-    // with the cutout's vertical center. Then:
-    //   - Clock + signal dots (left cluster, anchored to strip's
-    //     CenterStart) sit at the same height as the cutout, just
-    //     to the left of it.
-    //   - Me + M + I + battery (right cluster, anchored to strip's
-    //     CenterEnd) sit at the same height as the cutout, just to
-    //     the right of it.
-    //   - The Dynamic Island (centred) wraps AROUND the cutout
-    //     with its left + right halves.
-    // All three on a single horizontal line that THREADS through
-    // the cutout — exactly the iPhone Dynamic Island layout.
-    //
-    // Math: top-padding = cutout.centerY - STRIP_HEIGHT/2 — that
-    // puts the strip's center on the cutout's center.
+    // New rule: safeTopDp is just 0 when a cutout is present (the
+    // pill itself wraps around the hole). On non-cutout devices
+    // we still respect the system inset so we don't tuck under
+    // the system status bar zone.
     val cutoutTopDp = WindowInsets.displayCutout.asPaddingValues().calculateTopPadding()
     val statusTopDp = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
     val safeTopDp = when {
-        cutout != null -> (cutout.centerYDp - STRIP_HEIGHT_DP / 2f).coerceAtLeast(0f)
+        cutout != null -> 0f
         cutoutTopDp.value > 0f -> cutoutTopDp.value
         statusTopDp.value > 0f -> statusTopDp.value
         else -> PIXEL_PINHOLE_FLOOR_DP.toFloat()
     }
 
+    // Two-layer Box so the wrapping pills (much larger than the
+    // strip's own visible bg height) can extend below it without
+    // being clipped by the rounded-corner mask:
+    //   - Outer Box: positioning + size, NO clip
+    //   - Inner Box: rounded background, clipped, sized to
+    //     STRIP_HEIGHT
+    //   - Foreground content (clusters + DI): rendered on top of
+    //     the bg layer, free to overflow visually
     Box(
         modifier = modifier
             .fillMaxWidth()
-            // Top padding = max of system insets + Pixel-class
-            // floor. This puts the strip cleanly below the camera
-            // pinhole on every Pixel device shipped 2023+ (10 Pro,
-            // 9 Pro, 9 Pro Fold outer + inner) without needing
-            // per-device hardcodes.
-            .padding(top = safeTopDp.dp)
-            .clip(RoundedCornerShape(bottomStart = 14.dp, bottomEnd = 14.dp))
-            .background(MytharaColors.Bg)
-            .padding(horizontal = 14.dp, vertical = 4.dp)
-            .height(STRIP_HEIGHT_DP.dp),
+            .padding(top = safeTopDp.dp),
     ) {
+        // Background pad — clipped + filled. This is what the
+        // user perceives as "the status bar shape".
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(STRIP_HEIGHT_DP.dp)
+                .clip(RoundedCornerShape(bottomStart = 14.dp, bottomEnd = 14.dp))
+                .background(MytharaColors.Bg),
+        )
+        // Foreground content layer — sized to the strip's bg
+        // height + horizontal padding for the clusters, but does
+        // NOT clip its children, so the 3x DynamicIsland pill is
+        // free to render above + below the strip's visible bg.
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(STRIP_HEIGHT_DP.dp)
+                .padding(horizontal = 14.dp, vertical = 4.dp),
+        ) {
         // Left cluster: clock + signal-strength dots.
         Row(
             modifier = Modifier.align(Alignment.CenterStart),
@@ -260,7 +268,8 @@ fun MytharaStatusBar(
             )
             CircularBatteryIcon(percent = battery.percent, charging = battery.charging)
         }
-    }
+        } // end inner foreground Box
+    } // end outer positioning Box
 }
 
 /**

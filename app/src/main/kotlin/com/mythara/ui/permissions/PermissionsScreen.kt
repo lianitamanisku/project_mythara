@@ -421,6 +421,24 @@ private fun permissionItems(ctx: Context): List<PermissionItem> {
             Uri.parse("package:${ctx.packageName}"),
         ),
     )
+    // Keystroke learning — the most privacy-sensitive opt-in
+    // Mythara has. Default OFF; the row's `isGranted` reflects
+    // whether the underlying Accessibility service is on (which
+    // is the precondition); the actual KeyLearnStore toggle
+    // lives in Settings → Resonance & Learning so it gets the
+    // proper async-aware Switch UI rather than the install-style
+    // row this screen renders.
+    list += PermissionItem(
+        key = "keystroke-learn",
+        title = "always-learn from keystrokes (sensitive!)",
+        subtitle = "default OFF · turn on in Settings → Resonance & Learning. " +
+            "Requires Accessibility above. Passwords + banking/payment apps always blocked.",
+        kind = PermKind.Special,
+        // isGranted shows accessibility-enabled state — the
+        // store toggle lives elsewhere (see subtitle).
+        isGranted = isAccessibilityEnabled(ctx),
+        specialIntent = Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS),
+    )
 
     return list
 }

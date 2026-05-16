@@ -214,7 +214,7 @@ private fun SinglePill(
             Text(
                 text = insight?.text.orEmpty().take(MAX_INSIGHT_CHARS),
                 color = insight?.accent ?: MytharaColors.Fg,
-                fontSize = 10.sp,
+                fontSize = 22.sp,
                 fontWeight = FontWeight.Medium,
                 maxLines = 1,
             )
@@ -222,9 +222,9 @@ private fun SinglePill(
             Text(
                 text = "MYTHARA",
                 color = RoseGeometry.Lavender,
-                fontSize = 9.sp,
+                fontSize = 20.sp,
                 fontWeight = FontWeight.Bold,
-                letterSpacing = 1.5.sp,
+                letterSpacing = 3.sp,
             )
         }
     }
@@ -260,21 +260,27 @@ private fun WrappingPills(
         // LEFT half: rose only (compact). Right edge sits gap dp
         // from the cutout's left edge.
         val leftRightEdgeDp = cutout.leftDp - gap
-        val leftWidthDp = ROSE_DP + 14f // tighter padding than the wide pill
+        // Pill width = rose + symmetric padding. The padding scales
+        // with the pill size so the rose feels centered visually
+        // (24dp for the 108dp pill matches the proportions of the
+        // 7dp padding for the old 36dp pill — both ≈ 22% of pill
+        // height).
+        val sidePaddingDp = (PILL_HEIGHT_DP * 0.22f)
+        val leftWidthDp = ROSE_DP + sidePaddingDp * 2
         val leftLeftDp = leftRightEdgeDp - leftWidthDp
         Box(
             modifier = Modifier
                 .offset(x = leftLeftDp.dp, y = pillCenterY.dp)
                 .scale(bounce.coerceIn(0f, 1f))
                 .height(PILL_HEIGHT_DP.dp)
+                .width(leftWidthDp.dp)
                 .clip(RoundedCornerShape(PILL_HEIGHT_DP.dp))
                 .background(PILL_BG)
                 .clickable(
                     interactionSource = remember { MutableInteractionSource() },
                     indication = null,
                     onClick = onTap,
-                )
-                .padding(horizontal = 7.dp),
+                ),
             contentAlignment = Alignment.Center,
         ) {
             Box(modifier = Modifier.scale(pulseScale)) {
@@ -303,9 +309,9 @@ private fun WrappingPills(
                     onClick = onTap,
                 )
                 .animateContentSize(animationSpec = tween(durationMillis = 220))
-                .padding(horizontal = 9.dp),
+                .padding(horizontal = 24.dp),
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(5.dp),
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
         ) {
             if (showingInsight) {
                 Box(
@@ -317,7 +323,7 @@ private fun WrappingPills(
                 Text(
                     text = insight?.text.orEmpty().take(MAX_INSIGHT_CHARS),
                     color = insight?.accent ?: MytharaColors.Fg,
-                    fontSize = 10.sp,
+                    fontSize = 22.sp,
                     fontWeight = FontWeight.Medium,
                     maxLines = 1,
                 )
@@ -325,9 +331,9 @@ private fun WrappingPills(
                 Text(
                     text = "MYTHARA",
                     color = RoseGeometry.Lavender,
-                    fontSize = 9.sp,
+                    fontSize = 20.sp,
                     fontWeight = FontWeight.Bold,
-                    letterSpacing = 1.5.sp,
+                    letterSpacing = 3.sp,
                 )
             }
         }
@@ -375,18 +381,21 @@ private fun RoseMarkSpinning(
     }
 }
 
-/** Pill height — sized to swallow the actual Pixel pinhole.
- *  Per the documented Pixel cutout dimensions (6.0mm physical
- *  diameter, ~55-65dp logical at xxhdpi/xxxhdpi), the cutout
- *  fills more screen real estate than the earlier 26dp pill
- *  could comfortably wrap. We bump to 36dp so the pill height
- *  (and therefore both the wrap halves AND the single-pill
- *  fallback) is comfortably TALLER than the cutout's vertical
- *  extent — so the camera hole fits ENTIRELY within the pill's
- *  vertical span, not poking above or below. */
-private const val PILL_HEIGHT_DP = 36
-private const val ROSE_DP = 22
-private const val ACCENT_DOT_DP = 9
+/** Pill height — TRIPLED from the previous 36dp per user spec.
+ *  The 3x size makes the island a prominent UI element rather
+ *  than a discreet status-bar accent, with the rose + MYTHARA
+ *  text rendered LARGE on either side of the cutout. The pill's
+ *  vertical center is anchored to the cutout's vertical center
+ *  via the wrap math, so a 108dp pill extends ~54dp above and
+ *  below the cutout — the chrome-style background of the
+ *  MytharaStatusBar's bg layer (44dp tall) is shorter than the
+ *  pill, so the pill visibly overflows below the strip and reads
+ *  as "the island floats over the chrome", matching the user's
+ *  ask "leave a current-island-size space in the middle before
+ *  putting the Mythara logo and Mythara text on either side". */
+private const val PILL_HEIGHT_DP = 108
+private const val ROSE_DP = 60
+private const val ACCENT_DOT_DP = 14
 private const val MAX_INSIGHT_CHARS = 28
 private const val POLL_INTERVAL_MS = 500L
 

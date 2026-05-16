@@ -7,10 +7,17 @@ import android.os.Bundle
 import android.util.Log
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
+import com.mythara.keylog.KeystrokeIngestor
+import dagger.hilt.android.AndroidEntryPoint
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
+import javax.inject.Inject
 import kotlin.coroutines.resume
 
 /**
@@ -34,7 +41,16 @@ import kotlin.coroutines.resume
  * when the system attaches us; `onDestroy()` when the user toggles
  * us off or the system kills the service.
  */
+@AndroidEntryPoint
 class PhoneControlAccessibilityService : AccessibilityService() {
+
+    /** Keystroke ingestor — gated on [com.mythara.keylog.KeyLearnStore]
+     *  internally; safe to inject unconditionally. */
+    @Inject lateinit var keystrokeIngestor: KeystrokeIngestor
+
+    /** Service-scoped coroutine for fire-and-forget keystroke
+     *  ingestion. Cancelled on service destroy. */
+    private val ioScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     override fun onServiceConnected() {
         super.onServiceConnected()
@@ -49,13 +65,25 @@ class PhoneControlAccessibilityService : AccessibilityService() {
             instance = null
             _isEnabled.value = false
         }
+        ioScope.coroutineContext[kotlinx.coroutines.Job]?.cancel()
         Log.d(TAG, "service destroyed")
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
-        // Snapshot model — we don't react to events live. The
-        // `read_screen` tool pulls [rootInActiveWindow] on demand.
-        // This callback exists because the service contract requires it.
+        // Most events are no-ops — this service is snapshot-on-
+        // demand for `read_screen`. The exception is
+        // TYPE_VIEW_TEXT_CHANGED, which the KeystrokeIngestor
+        // uses to capture typing across every app for the
+        // always-learn pipeline. Ingestor self-gates on
+        // KeyLearnStore.isEnabled() so this is a no-op when the
+        // user hasn't opted in.
+        if (event == null) return
+        if (event.eventType == AccessibilityEvent.TYPE_VIEW_TEXT_CHANGED) {
+            ioScope.launch {
+                runCatching { keystrokeIngestor.handle(event) }
+                    .onFailure { Log.w(TAG, "keystroke ingest failed: ${it.message}") }
+            }
+        }
     }
 
     override fun onInterrupt() {

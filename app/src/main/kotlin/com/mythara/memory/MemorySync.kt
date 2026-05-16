@@ -70,6 +70,7 @@ class MemorySync @Inject constructor(
     private val lifelineRepo: com.mythara.lifeline.LifelineRepository,
     private val taskRepo: com.mythara.tasks.TaskRepository,
     private val musicVocabulary: com.mythara.music.MusicVocabulary,
+    private val graphRepo: com.mythara.memory.graph.GraphMemoryRepository,
     @dagger.hilt.android.qualifiers.ApplicationContext private val ctx: android.content.Context,
 ) {
     data class Report(
@@ -273,6 +274,47 @@ class MemorySync @Inject constructor(
             // Raw working-tier records that *aren't* syncable (Observe
             // transcripts) deliberately stay unsynced=false forever in
             // the local vault.
+        }
+
+        // ---- graph/entities.jsonl + graph/edges.jsonl
+        //      Graphiti-style temporal knowledge graph rows (entities
+        //      + edges) that the GraphTurnExtractor + agent's
+        //      reflective updates have been writing locally. We sync
+        //      the entire unsynced batch every run, then mark them
+        //      synced. A fresh install can pull the graph back from
+        //      the repo on restore.
+        //
+        //      Privacy: SecretScrubber already runs at the
+        //      GraphMemoryRepository write boundary, so what hits
+        //      the repo is the same scrub-then-store form the
+        //      vault uses. No additional gating.
+        if (cfg.syncLearnings) {
+            val payload = runCatching { graphRepo.syncPayload(limit = 500) }
+                .getOrNull()
+            if (payload != null) {
+                if (payload.entities.isNotEmpty()) {
+                    val body = payload.entities.joinToString("\n") { e ->
+                        json.encodeToString(GraphEntityRecord.serializer(), entityToRecord(e, deviceId))
+                    }
+                    putWithCache(
+                        client, cfg, "graph/entities.jsonl", body, manifest,
+                        "mythara: graph entities (+${payload.entities.size})",
+                        written, skipped,
+                    )
+                    runCatching { graphRepo.markEntitiesSynced(payload.entities.map { it.id }) }
+                }
+                if (payload.edges.isNotEmpty()) {
+                    val body = payload.edges.joinToString("\n") { e ->
+                        json.encodeToString(GraphEdgeRecord.serializer(), edgeToRecord(e, deviceId))
+                    }
+                    putWithCache(
+                        client, cfg, "graph/edges.jsonl", body, manifest,
+                        "mythara: graph edges (+${payload.edges.size})",
+                        written, skipped,
+                    )
+                    runCatching { graphRepo.markEdgesSynced(payload.edges.map { it.id }) }
+                }
+            }
         }
 
         // ---- tier placeholders for episodic/procedural. semantic/ has
@@ -1777,6 +1819,65 @@ class MemorySync @Inject constructor(
         val name: String? = null,
         /** DeviceIdStore stamp identifying which Mythara install authored this row. */
         val dev: String? = null,
+    )
+
+    /** Sync-wire shape for a [com.mythara.memory.graph.GraphEntity].
+     *  Carries enough to round-trip the entity on restore. */
+    @kotlinx.serialization.Serializable
+    private data class GraphEntityRecord(
+        val id: String,
+        val kind: String,
+        val name: String,
+        val nameKey: String,
+        val createdAtMs: Long,
+        val attrsJson: String? = null,
+        val conf: Float = 1f,
+        val dev: String? = null,
+    )
+
+    /** Sync-wire shape for a [com.mythara.memory.graph.GraphEdge]. */
+    @kotlinx.serialization.Serializable
+    private data class GraphEdgeRecord(
+        val id: String,
+        val subjectId: String,
+        val predicate: String,
+        val objectId: String,
+        val validAtMs: Long,
+        val validUntilMs: Long? = null,
+        val createdAtMs: Long,
+        val factText: String? = null,
+        val conf: Float = 1f,
+        val dev: String? = null,
+    )
+
+    private fun entityToRecord(
+        e: com.mythara.memory.graph.GraphEntity,
+        dev: String,
+    ): GraphEntityRecord = GraphEntityRecord(
+        id = e.id,
+        kind = e.kind,
+        name = e.name,
+        nameKey = e.nameKey,
+        createdAtMs = e.createdAtMs,
+        attrsJson = e.attrsJson,
+        conf = e.conf,
+        dev = dev,
+    )
+
+    private fun edgeToRecord(
+        e: com.mythara.memory.graph.GraphEdge,
+        dev: String,
+    ): GraphEdgeRecord = GraphEdgeRecord(
+        id = e.id,
+        subjectId = e.subjectId,
+        predicate = e.predicate,
+        objectId = e.objectId,
+        validAtMs = e.validAtMs,
+        validUntilMs = e.validUntilMs,
+        createdAtMs = e.createdAtMs,
+        factText = e.factText,
+        conf = e.conf,
+        dev = dev,
     )
 
     companion object {
