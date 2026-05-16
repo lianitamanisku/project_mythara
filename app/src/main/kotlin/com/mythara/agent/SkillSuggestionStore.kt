@@ -1,5 +1,6 @@
 package com.mythara.agent
 
+import android.util.Log
 import java.util.concurrent.atomic.AtomicReference
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -37,10 +38,19 @@ class SkillSuggestionStore @Inject constructor() {
      *  etc.) are excluded — a skill is "do these side effects in
      *  sequence", not "look at this state". */
     private val automationTools: Set<String> = setOf(
+        // UI driving
         "open_app", "tap", "swipe", "type_text", "press_back",
+        // Messaging / calls
         "send_sms_direct", "send_whatsapp_direct", "place_call_direct",
-        "screenshot", "set_alarm", "create_calendar_event",
+        // Scheduling
+        "set_alarm", "create_calendar_event", "create_task", "create_reminder",
+        "schedule_agent_task",
+        // Visual / device state
+        "screenshot", "take_photo", "render_canvas", "update_canvas",
+        "open_url", "generate_image",
+        // System / shell
         "apply_cosmetic", "linux_vm", "run_shell",
+        "write_file",
     )
 
     /** Tools fired in the current in-flight turn. Cleared by
@@ -55,6 +65,7 @@ class SkillSuggestionStore @Inject constructor() {
     fun recordTool(name: String) {
         if (name in automationTools) {
             currentTurnTools += name
+            Log.d(TAG, "recorded automation tool: $name (chain now ${currentTurnTools.size}: $currentTurnTools)")
         }
     }
 
@@ -62,8 +73,10 @@ class SkillSuggestionStore @Inject constructor() {
      *  the tools land in [pendingOffer] for the next turn to pick up. */
     @Synchronized
     fun maybeMarkForOffer() {
+        Log.d(TAG, "maybeMarkForOffer: chain=${currentTurnTools.size} (${currentTurnTools.joinToString()}) threshold=$MIN_CHAIN_LEN")
         if (currentTurnTools.size >= MIN_CHAIN_LEN) {
             pendingOffer.set(currentTurnTools.toList())
+            Log.i(TAG, "stashed skill-save offer for next turn: $currentTurnTools")
         }
         currentTurnTools.clear()
     }
@@ -81,9 +94,14 @@ class SkillSuggestionStore @Inject constructor() {
     fun consume(): List<String>? = pendingOffer.getAndSet(null)
 
     companion object {
+        private const val TAG = "Mythara/SkillSuggest"
+
         /** Minimum automation-tool chain length to suggest a skill.
-         *  Three steps reliably reads as "procedure"; one or two are
-         *  usually just an ad-hoc request. */
-        const val MIN_CHAIN_LEN = 3
+         *  Lowered from 3 to 2 — open_app + tap (e.g. "open Spotify,
+         *  start a playlist") is already worth offering to save.
+         *  The cost of an unwanted offer is tiny (one short
+         *  sentence the user ignores); the cost of missing a real
+         *  save opportunity is the skill never getting recorded. */
+        const val MIN_CHAIN_LEN = 2
     }
 }
