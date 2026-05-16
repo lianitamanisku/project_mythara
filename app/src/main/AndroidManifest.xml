@@ -417,10 +417,10 @@
              match the query is funnelled into ChatViewModel. Single
              AudioRecord client; mutually exclusive with
              ObserveForegroundService at the hardware layer. Mic-only,
-             so the LumiListenerService is itself gated on the
-             RECORD_AUDIO grant in code — see LumiListenerStore. -->
+             so the MytharaWakeListenerService is itself gated on the
+             RECORD_AUDIO grant in code — see WakeListenerStore. -->
         <service
-            android:name=".wake.LumiListenerService"
+            android:name=".wake.MytharaWakeListenerService"
             android:exported="false"
             android:foregroundServiceType="microphone"
             tools:targetApi="34" />

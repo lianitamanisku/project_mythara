@@ -11,7 +11,7 @@ import javax.inject.Singleton
 
 /**
  * Single-process state holder for the Lumi always-listen pipeline.
- * The [LumiListenerService] writes here; [WakeWordPanelViewModel] and
+ * The [MytharaWakeListenerService] writes here; [WakeWordPanelViewModel] and
  * [com.mythara.ui.MytharaRoot] read.
  *
  * The contract:
@@ -24,7 +24,7 @@ import javax.inject.Singleton
  *    multiple subscribers consume the same event without rendezvous.
  */
 @Singleton
-class LumiListenerStore @Inject constructor() {
+class WakeListenerStore @Inject constructor() {
 
     sealed interface State {
         data object Idle : State

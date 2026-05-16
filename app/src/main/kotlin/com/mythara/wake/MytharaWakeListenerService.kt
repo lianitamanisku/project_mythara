@@ -15,7 +15,7 @@ import androidx.core.app.NotificationCompat
 import com.mythara.MainActivity
 import com.mythara.mic.MicBroker
 import com.mythara.secret.observe.AudioRecorder
-import com.mythara.secret.observe.extract.LumiNoteDetector
+import com.mythara.secret.observe.extract.QuickNoteDetector
 import com.mythara.secret.observe.vosk.VoskAsr
 import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.CoroutineScope
@@ -51,10 +51,10 @@ import javax.inject.Inject
  * `AudioRecord.startRecording()` fails and lands in State.Error.
  */
 @AndroidEntryPoint
-class LumiListenerService : Service() {
+class MytharaWakeListenerService : Service() {
 
     @Inject lateinit var asr: VoskAsr
-    @Inject lateinit var store: LumiListenerStore
+    @Inject lateinit var store: WakeListenerStore
     @Inject lateinit var micBroker: MicBroker
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -79,24 +79,24 @@ class LumiListenerService : Service() {
 
     override fun onDestroy() {
         super.onDestroy()
-        store.setState(LumiListenerStore.State.Stopping)
+        store.setState(WakeListenerStore.State.Stopping)
         runCatching { loopJob?.cancel() }
         scope.cancel()
-        store.setState(LumiListenerStore.State.Idle)
+        store.setState(WakeListenerStore.State.Idle)
     }
 
     private fun startListening() {
         if (loopJob?.isActive == true) return
         if (!asr.isReady()) {
             Log.w(TAG, "Vosk model not ready — open Secret Settings → speech model to download")
-            store.setState(LumiListenerStore.State.Error("Vosk model not downloaded"))
+            store.setState(WakeListenerStore.State.Error("Vosk model not downloaded"))
             stopSelf()
             return
         }
-        store.setState(LumiListenerStore.State.Starting)
+        store.setState(WakeListenerStore.State.Starting)
         if (!micBroker.acquire(MicBroker.Client.LUMI_LISTEN)) {
             val owner = micBroker.owner.value?.let { micBroker.describe(it) } ?: "another mode"
-            store.setState(LumiListenerStore.State.Error("Microphone busy — $owner is using it"))
+            store.setState(WakeListenerStore.State.Error("Microphone busy — $owner is using it"))
             stopSelf()
             return
         }
@@ -104,7 +104,7 @@ class LumiListenerService : Service() {
         if (!recorder.start()) {
             micBroker.release(MicBroker.Client.LUMI_LISTEN)
             store.setState(
-                LumiListenerStore.State.Error("AudioRecord init failed"),
+                WakeListenerStore.State.Error("AudioRecord init failed"),
             )
             recorder.release()
             stopSelf()
@@ -112,14 +112,14 @@ class LumiListenerService : Service() {
         }
         val recognizer = runCatching { asr.newRecognizer() }.getOrElse {
             recorder.release()
-            store.setState(LumiListenerStore.State.Error("Vosk recognizer init: ${it.message}"))
+            store.setState(WakeListenerStore.State.Error("Vosk recognizer init: ${it.message}"))
             stopSelf()
             return
         }
 
         val buf = ShortArray(recorder.readFrameSamples)
         loopJob = scope.launch {
-            store.setState(LumiListenerStore.State.Listening)
+            store.setState(WakeListenerStore.State.Listening)
             Log.d(TAG, "Mythara always-listen up — Vosk loop running")
             try {
                 while (isActive) {
@@ -138,7 +138,7 @@ class LumiListenerService : Service() {
             } catch (t: Throwable) {
                 Log.e(TAG, "listener loop crashed: ${t.message}", t)
                 store.setState(
-                    LumiListenerStore.State.Error(t.message ?: t.javaClass.simpleName),
+                    WakeListenerStore.State.Error(t.message ?: t.javaClass.simpleName),
                 )
             } finally {
                 runCatching { recognizer.close() }
@@ -157,7 +157,7 @@ class LumiListenerService : Service() {
         // explicitly addressed to the assistant". logcat is a circular
         // buffer that *does* persist long enough for screen-recording
         // / bug-report grabs to capture it, so don't log raw text.
-        val query = LumiNoteDetector.detect(text) ?: return
+        val query = QuickNoteDetector.detect(text) ?: return
         if (query.isBlank()) return
         // The match itself + the query text are loggable — the user
         // just chose to send these words to MiniMax, so by the time
@@ -197,7 +197,7 @@ class LumiListenerService : Service() {
         )
         val stopIntent = PendingIntent.getService(
             this, 1,
-            Intent(this, LumiListenerService::class.java).setAction(ACTION_STOP),
+            Intent(this, MytharaWakeListenerService::class.java).setAction(ACTION_STOP),
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
         )
         return NotificationCompat.Builder(this, CHANNEL_ID)

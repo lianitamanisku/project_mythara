@@ -24,7 +24,7 @@ import javax.inject.Singleton
  * chat agent (where they go through the normal MiniMax round-trip).
  */
 @Singleton
-class LumiListenerSettings @Inject constructor(
+class WakeListenerSettings @Inject constructor(
     @ApplicationContext private val ctx: Context,
 ) {
     private val Context.dataStore: DataStore<Preferences>

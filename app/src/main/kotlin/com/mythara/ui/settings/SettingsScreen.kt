@@ -458,7 +458,20 @@ fun SettingsScreen(
         MemorySyncPanel()
 
         Spacer(Modifier.height(16.dp))
-        LumiListenerPanel()
+        WakeListenerPanel()
+
+        // Capability Expansion v2 — SSH bridge to the Android 15
+        // Linux Terminal Debian VM. Configured here so the agent's
+        // `linux_vm` tool can reach it.
+        Spacer(Modifier.height(16.dp))
+        LinuxBridgePanel()
+
+        // Capability Expansion v2 — Shizuku state + setup prompt.
+        // Required by the cosmetic-tweak tools (`apply_cosmetic` /
+        // `list_cosmetic_options`); degrades gracefully when not
+        // installed.
+        Spacer(Modifier.height(16.dp))
+        ShizukuPanel()
 
         Spacer(Modifier.height(16.dp))
         Row(modifier = Modifier.fillMaxWidth()) {

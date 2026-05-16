@@ -36,7 +36,7 @@ class ChatViewModel @Inject constructor(
     private val history: HistoryRepository,
     private val tts: Tts,
     @Suppress("unused") private val languageDetector: LanguageDetector,
-    lumiListenerStore: com.mythara.wake.LumiListenerStore,
+    wakeListenerStore: com.mythara.wake.WakeListenerStore,
     val micBroker: com.mythara.mic.MicBroker,
     notifAutoProcessStore: com.mythara.services.NotificationAutoProcessStore,
     private val autopilotStore: com.mythara.data.AutopilotStore,
@@ -89,7 +89,7 @@ class ChatViewModel @Inject constructor(
         // message, but flag it as voice-originated so the agent loop
         // injects the "be brief, no markdown" system prompt.
         viewModelScope.launch {
-            lumiListenerStore.wakeQueries.collect { wq ->
+            wakeListenerStore.wakeQueries.collect { wq ->
                 // Autopilot gate — wake-word triggers are an "auto"
                 // path; if the user has flipped autopilot off, drop
                 // the query silently. Their next tap on the mic

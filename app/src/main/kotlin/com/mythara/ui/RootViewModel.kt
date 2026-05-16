@@ -3,7 +3,8 @@ package com.mythara.ui
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.mythara.data.OnboardingStore
-import com.mythara.wake.LumiListenerStore
+import com.mythara.ui.canvas.CanvasController
+import com.mythara.wake.WakeListenerStore
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -26,10 +27,17 @@ import javax.inject.Inject
  */
 @HiltViewModel
 class RootViewModel @Inject constructor(
-    store: LumiListenerStore,
+    store: WakeListenerStore,
     onboardingStore: OnboardingStore,
+    /**
+     * Process-wide [CanvasController] singleton. Exposed here so
+     * MytharaRoot can observe `canvasController.navigationRequest`
+     * and auto-pivot to the Canvas route whenever the agent's
+     * `render_canvas` tool fires with `auto_navigate=true`.
+     */
+    val canvasController: CanvasController,
 ) : ViewModel() {
-    val wakeQueries: SharedFlow<LumiListenerStore.WakeQuery> = store.wakeQueries
+    val wakeQueries: SharedFlow<WakeListenerStore.WakeQuery> = store.wakeQueries
 
     /**
      * Null while we're still reading the DataStore (one-frame race on

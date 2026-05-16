@@ -26,8 +26,20 @@ import javax.inject.Singleton
 @Singleton
 class VoiceActionStore @Inject constructor() {
 
-    /** Reason a voice action was requested; surfaced for debug/logging. */
-    enum class Source { AssistIntent, VoiceCommandIntent, WebSearchIntent, External }
+    /** Reason a voice action was requested; surfaced for debug/logging.
+     *
+     *  [RosePress] is the press-and-hold gesture on the floating rose
+     *  amulet (Capability Expansion v2). Functionally identical to
+     *  [AssistIntent] at the ChatViewModel level — both fire a one-shot
+     *  SpeechRecognition listen — but kept distinct so audit logs can
+     *  tell the user how they invoked the agent. */
+    enum class Source {
+        AssistIntent,
+        VoiceCommandIntent,
+        WebSearchIntent,
+        External,
+        RosePress,
+    }
 
     data class VoiceTrigger(val source: Source, val tsMillis: Long = System.currentTimeMillis())
 

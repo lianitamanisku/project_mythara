@@ -30,7 +30,7 @@ import javax.inject.Inject
  *
  * Past that point, the OS-bound services (NotificationListener,
  * PhoneControlAccessibilityService, MytharaVoiceInteractionService,
- * LumiListenerService) auto-rebind based on their own grants, so
+ * MytharaWakeListenerService) auto-rebind based on their own grants, so
  * once the process is awake, everything that should be live is
  * live without explicit re-start.
  *

@@ -43,7 +43,7 @@ class MicBroker @Inject constructor(
     enum class Client {
         /** ObserveForegroundService — passive learning loop. */
         OBSERVE,
-        /** LumiListenerService — always-on "Hey Mythara" wake-word. */
+        /** MytharaWakeListenerService — always-on "Hey Mythara" wake-word. */
         LUMI_LISTEN,
         /** ChatScreen continuous voice mode (Pixel Soda). */
         CONTINUOUS_CHAT,

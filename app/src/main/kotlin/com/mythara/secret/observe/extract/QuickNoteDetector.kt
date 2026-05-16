@@ -24,7 +24,7 @@ package com.mythara.secret.observe.extract
  * Observe-mode quietly capture asks-while-passing without needing the
  * user to switch contexts.
  */
-object LumiNoteDetector {
+object QuickNoteDetector {
 
     /**
      * Returns the note text (with the "Mythara" prefix stripped) if the
@@ -79,9 +79,24 @@ object LumiNoteDetector {
      * because that phrasing is unusual in natural speech, and users
      * who say "hey me" deliberately probably want to address the
      * assistant anyway.
+     *
+     * Mythara phonetic variants (Capability Expansion v2): the wake
+     * word is now "Hey Mythara" but Vosk's en-us small model has zero
+     * exposure to either "Mythara" or its sibling Lumi, so the same
+     * out-of-vocab problem applies. We list common renderings the
+     * recognizer produces so the user gets a wake even when the
+     * transcription is mangled:
+     *   • "my tara" (Vosk splits at the vowel)
+     *   • "mithara / methara / mathara / metara / metora" (vowel drift)
+     *   • "mai tara / my tarah / my tarra / my tora"
+     *   • "mid era / matera" (consonant collapse)
+     *   • "mit hara / matt hara" (h-onset rendering)
+     * The plain "mythara" form is included too in case a future Vosk
+     * model knows the word, and as a hint for users who type the
+     * note instead of speaking it.
      */
     private val PREFIX_RE = Regex(
-        pattern = """^\s*(?:(?:hey|hi|hello|okay|ok|yo|a|the)\s+me|(?:hey\s+|hi\s+|hello\s+|okay\s+|ok\s+|yo\s+)?(?:lumi|loomi|loomy|lumey|leumi|lumy|lumie|loomie|lou\s+me|lou\s+mi))\b[\s,:\-]*(?:please\s+|can\s+you\s+|could\s+you\s+|remember\s+|note\s+|jot\s+down\s+)?""",
+        pattern = """^\s*(?:(?:hey|hi|hello|okay|ok|yo|a|the)\s+me|(?:hey\s+|hi\s+|hello\s+|okay\s+|ok\s+|yo\s+)?(?:lumi|loomi|loomy|lumey|leumi|lumy|lumie|loomie|lou\s+me|lou\s+mi|mythara|my\s+tara|my\s+tarah|my\s+tarra|my\s+tora|mai\s+tara|mithara|methara|mathara|metara|metora|mid\s+era|matera|mit\s+hara|matt\s+hara))\b[\s,:\-]*(?:please\s+|can\s+you\s+|could\s+you\s+|remember\s+|note\s+|jot\s+down\s+)?""",
         options = setOf(RegexOption.IGNORE_CASE),
     )
 }

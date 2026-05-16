@@ -32,9 +32,9 @@ import androidx.lifecycle.viewModelScope
 import com.mythara.secret.observe.vosk.VoskModelStore
 import com.mythara.ui.theme.Glyph
 import com.mythara.ui.theme.MytharaColors
-import com.mythara.wake.LumiListenerService
-import com.mythara.wake.LumiListenerSettings
-import com.mythara.wake.LumiListenerStore
+import com.mythara.wake.MytharaWakeListenerService
+import com.mythara.wake.WakeListenerSettings
+import com.mythara.wake.WakeListenerStore
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -53,16 +53,16 @@ import javax.inject.Inject
  *  - mic-permission state
  */
 @HiltViewModel
-class LumiListenerPanelViewModel @Inject constructor(
+class WakeListenerPanelViewModel @Inject constructor(
     @ApplicationContext private val ctx: Context,
-    private val settings: LumiListenerSettings,
-    private val store: LumiListenerStore,
+    private val settings: WakeListenerSettings,
+    private val store: WakeListenerStore,
     private val voskModelStore: VoskModelStore,
 ) : ViewModel() {
 
     data class State(
         val enabled: Boolean = false,
-        val serviceState: LumiListenerStore.State = LumiListenerStore.State.Idle,
+        val serviceState: WakeListenerStore.State = WakeListenerStore.State.Idle,
         val micGranted: Boolean = false,
         val voskReady: Boolean = false,
     )
@@ -98,7 +98,7 @@ class LumiListenerPanelViewModel @Inject constructor(
     fun setEnabled(value: Boolean) {
         viewModelScope.launch {
             settings.setEnabled(value)
-            val intent = Intent(ctx, LumiListenerService::class.java)
+            val intent = Intent(ctx, MytharaWakeListenerService::class.java)
             if (value) {
                 if (!_state.value.voskReady) return@launch
                 if (!_state.value.micGranted) return@launch
@@ -118,7 +118,7 @@ class LumiListenerPanelViewModel @Inject constructor(
  * via the normal MiniMax chat flow).
  */
 @Composable
-fun LumiListenerPanel(vm: LumiListenerPanelViewModel = hiltViewModel()) {
+fun WakeListenerPanel(vm: WakeListenerPanelViewModel = hiltViewModel()) {
     val state by vm.state.collectAsState()
 
     val micPermLauncher = rememberLauncherForActivityResult(
@@ -149,18 +149,18 @@ fun LumiListenerPanel(vm: LumiListenerPanelViewModel = hiltViewModel()) {
                 Glyph.CircleOutline, MytharaColors.FgMute,
                 "RECORD_AUDIO permission needed",
             )
-            state.serviceState is LumiListenerStore.State.Listening -> Triple(
+            state.serviceState is WakeListenerStore.State.Listening -> Triple(
                 Glyph.Dot, MytharaColors.Julep, "listening for 'Hey Mythara …'",
             )
-            state.serviceState is LumiListenerStore.State.Starting -> Triple(
+            state.serviceState is WakeListenerStore.State.Starting -> Triple(
                 Glyph.Ellipsis, MytharaColors.Citron, "starting…",
             )
-            state.serviceState is LumiListenerStore.State.Stopping -> Triple(
+            state.serviceState is WakeListenerStore.State.Stopping -> Triple(
                 Glyph.Ellipsis, MytharaColors.FgDim, "stopping…",
             )
-            state.serviceState is LumiListenerStore.State.Error -> Triple(
+            state.serviceState is WakeListenerStore.State.Error -> Triple(
                 Glyph.Cross, MytharaColors.Sriracha,
-                "error: ${(state.serviceState as LumiListenerStore.State.Error).message}",
+                "error: ${(state.serviceState as WakeListenerStore.State.Error).message}",
             )
             else -> Triple(Glyph.CircleOutline, MytharaColors.FgMute, "off")
         }

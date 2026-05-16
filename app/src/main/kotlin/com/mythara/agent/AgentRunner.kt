@@ -73,6 +73,11 @@ class AgentRunner @Inject constructor(
     private val autoContinue: com.mythara.agent.todo.AgentAutoContinueController,
     private val todoIntentExtractor: com.mythara.agent.todo.TodoIntentExtractor,
     private val graphTurnExtractor: com.mythara.memory.graph.GraphTurnExtractor,
+    /** Capability Expansion v2 — per-turn lexical Big Five + Schwartz
+     *  values + preferences extractor. Default-on; runs on the same
+     *  parallel-coroutine pattern as the other post-turn extractors so
+     *  a slow pass on one side doesn't stall the others. */
+    private val personaTraitExtractor: com.mythara.analytics.PersonaTraitExtractor,
 ) {
     /**
      * Process-wide scope. SupervisorJob so one failing turn doesn't
@@ -423,6 +428,20 @@ class AgentRunner @Inject constructor(
                 val n = graphTurnExtractor.extract(userText = userText, agentReply = cleaned)
                 if (n > 0) Log.d(TAG, "wrote $n graph rows from this turn")
             }.onFailure { Log.w(TAG, "graph extraction failed: ${it.message}") }
+        }
+        // Parallel persona-trait extraction — lexical Big Five +
+        // Schwartz values + preferences + concerns + comm-style for
+        // the user (and any contacts they mentioned). Default-on per
+        // the v2 plan. Independent coroutine so the LLM-driven
+        // graph pass doesn't gate trait recording.
+        scope.launch {
+            runCatching {
+                personaTraitExtractor.extract(
+                    userText = userText,
+                    assistantText = cleaned,
+                    mentionedContacts = emptyList(),
+                )
+            }.onFailure { Log.w(TAG, "persona-trait extraction failed: ${it.message}") }
         }
     }
 

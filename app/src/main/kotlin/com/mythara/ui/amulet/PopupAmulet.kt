@@ -126,6 +126,15 @@ fun PopupAmulet(
     pages: List<AmuletPage>,
     amuletSizeDp: Int,
     onScrimTap: () -> Unit,
+    /**
+     * PTT-as-Rose hook. Fires when the user holds the central rose
+     * for at least [PTT_TRIGGER_MS] without dragging toward any chip.
+     * The host calls into [com.mythara.voice.VoiceActionStore].fire(
+     * RosePress) which starts a one-shot SpeechRecognition listen via
+     * ChatViewModel — same path Pixel Buds touch-and-hold uses.
+     * Default no-op so callers that don't want PTT can ignore.
+     */
+    onPttPress: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     if (pages.isEmpty()) {
@@ -398,10 +407,12 @@ fun PopupAmulet(
                     awaitEachGesture {
                         val down = awaitFirstDown(requireUnconsumed = false)
                         down.consume()
+                        val downTimeMs = System.currentTimeMillis()
                         fingerPos = Offset(
                             down.position.x + triggerOriginX,
                             down.position.y + triggerOriginY,
                         )
+                        var pttFired = false
                         while (true) {
                             val event = awaitPointerEvent()
                             val change = event.changes.firstOrNull() ?: break
@@ -410,16 +421,39 @@ fun PopupAmulet(
                                 change.position.y + triggerOriginY,
                             )
                             change.consume()
+                            // PTT cross-threshold: still pressed for
+                            // PTT_TRIGGER_MS, finger hasn't glided
+                            // toward any chip → fire PTT once.
+                            if (!pttFired &&
+                                change.pressed &&
+                                nearestChipIdx < 0 &&
+                                (System.currentTimeMillis() - downTimeMs) >= PTT_TRIGGER_MS
+                            ) {
+                                pttFired = true
+                                onPttPress()
+                            }
                             if (change.changedToUp()) break
                             if (!change.pressed) break
                         }
                         val idx = nearestChipIdx
-                        if (idx >= 0) {
-                            activePage.chips[idx].onTap()
-                        } else {
-                            // Released without a chip target —
-                            // treat as a tap-on-rose (cycle).
-                            pageIndex = (pageIndex + 1) % pages.size
+                        when {
+                            idx >= 0 -> {
+                                // Glide-released onto a chip → fire
+                                // its action.
+                                activePage.chips[idx].onTap()
+                            }
+                            pttFired -> {
+                                // PTT was the gesture — host already
+                                // handled it. Suppress the page-
+                                // cycle that would otherwise fire on
+                                // tap-without-chip.
+                            }
+                            else -> {
+                                // Released without a chip target
+                                // before PTT threshold — treat as a
+                                // tap-on-rose (cycle pages).
+                                pageIndex = (pageIndex + 1) % pages.size
+                            }
                         }
                         fingerPos = null
                     }
@@ -489,4 +523,11 @@ private const val ROSE_HALO_OFFSET_PX = 8f
  *  bigger than the chip's own radius so the user doesn't have
  *  to be pixel-perfect. */
 private const val SELECTION_RADIUS_PX = 90f
+
+/** How long the finger has to be held on the central rose (without
+ *  gliding toward any chip) before we treat it as a PTT press.
+ *  250 ms is short enough that the user can speak immediately yet
+ *  long enough that a quick page-cycle tap doesn't accidentally
+ *  fire mic capture. */
+private const val PTT_TRIGGER_MS = 250L
 

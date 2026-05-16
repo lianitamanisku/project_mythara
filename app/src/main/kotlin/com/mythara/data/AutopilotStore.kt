@@ -18,7 +18,7 @@ import javax.inject.Singleton
  * Lumi acts WITHOUT an explicit, in-the-moment tap from the user.
  *
  * Auto-paths gated by this flag:
- *   - Wake-word ("hey lumi") triggered queries from LumiListenerService
+ *   - Wake-word ("hey lumi") triggered queries from MytharaWakeListenerService
  *   - Notification auto-process (the "[notif] …" → agent turn flow)
  *   - Future passive triggers (silence-detected ambient questions, etc.)
  *

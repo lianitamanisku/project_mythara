@@ -8,7 +8,7 @@ import com.mythara.secret.observe.embed.EmbeddingsModelStore
 import com.mythara.secret.observe.embed.LocalEmbedder
 import com.mythara.mic.MicBroker
 import com.mythara.secret.observe.acoustic.AcousticAnalyzer
-import com.mythara.secret.observe.extract.LumiNoteDetector
+import com.mythara.secret.observe.extract.QuickNoteDetector
 import com.mythara.secret.observe.extract.SemanticExtractor
 import com.mythara.secret.observe.speaker.SpeakerVault
 import com.mythara.secret.observe.vault.LearningVault
@@ -323,7 +323,7 @@ class ObserveSession @Inject constructor(
         //     dark roast" both records the deliberate note AND
         //     reinforces the preference.
         var explicitNoteCount = 0
-        LumiNoteDetector.detect(text)?.let { noteText ->
+        QuickNoteDetector.detect(text)?.let { noteText ->
             val noteEmbedding = if (embedder.isReady()) {
                 runCatching { embedder.embed(noteText) }.getOrNull()
             } else null

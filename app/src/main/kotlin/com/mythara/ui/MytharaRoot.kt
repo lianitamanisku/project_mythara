@@ -167,6 +167,28 @@ fun MytharaRoot(
                         }
                     }
 
+                    // Canvas auto-navigate. The agent's `render_canvas`
+                    // tool sets CanvasController.navigationRequest=true
+                    // when its caller asks to also pivot the UI
+                    // (default for render_canvas). MytharaRoot observes
+                    // it here, navigates to the Canvas route, and
+                    // immediately clears the flag so a future render
+                    // without auto_navigate doesn't re-fire.
+                    val canvasController = rootVm.canvasController
+                    val canvasNavigateRequested by canvasController
+                        .navigationRequest.collectAsState()
+                    LaunchedEffect(canvasNavigateRequested) {
+                        if (canvasNavigateRequested) {
+                            val current = nav.currentDestination?.route
+                            if (current != Routes.Canvas) {
+                                nav.navigate(Routes.Canvas) {
+                                    launchSingleTop = true
+                                }
+                            }
+                            canvasController.consumeNavigationRequest()
+                        }
+                    }
+
                     // 3-way layout pivot:
                     //   Compact            → single-pane NavHost (phones)
                     //   Non-compact + tablet (smallestScreenWidthDp ≥ 720)
@@ -407,6 +429,22 @@ fun MytharaRoot(
                         }
                     }
 
+                    // PTT-as-Rose host: hold the central rose for
+                    // PTT_TRIGGER_MS without gliding toward any chip
+                    // → fire VoiceActionStore.fire(RosePress) which
+                    // ChatViewModel already collects to start a
+                    // one-shot SpeechRecognition listen. The
+                    // recognizer auto-finalises on silence, so the
+                    // user just presses, speaks, lifts off, and the
+                    // transcript flows into the agent loop.
+                    val pttDispatcher: com.mythara.voice.VoiceActionStore =
+                        remember { rootVm.let { _ ->
+                            dagger.hilt.android.EntryPointAccessors.fromApplication(
+                                ctx.applicationContext,
+                                MytharaRootEntryPoint::class.java,
+                            ).voiceActions()
+                        } }
+
                     amuletAnchor?.let { anchor ->
                         if (amuletPages.isNotEmpty()) {
                             PopupAmulet(
@@ -414,6 +452,15 @@ fun MytharaRoot(
                                 pages = amuletPages,
                                 amuletSizeDp = AMULET_SIZE_DP.value.toInt(),
                                 onScrimTap = { amuletAnchor = null },
+                                onPttPress = {
+                                    pttDispatcher.fire(
+                                        com.mythara.voice.VoiceActionStore.Source.RosePress,
+                                    )
+                                    // Dismiss the amulet so the user
+                                    // sees the chat surface react to
+                                    // the listen-state.
+                                    amuletAnchor = null
+                                },
                             )
                         }
                     }
@@ -563,6 +610,10 @@ object Routes {
 @dagger.hilt.InstallIn(dagger.hilt.components.SingletonComponent::class)
 interface MytharaRootEntryPoint {
     fun installedApps(): com.mythara.launcher.InstalledAppsProvider
+    /** Capability Expansion v2 — exposed so the PopupAmulet's
+     *  PTT-as-Rose press can fire VoiceActionStore.Source.RosePress
+     *  without going through a ViewModel constructor. */
+    fun voiceActions(): com.mythara.voice.VoiceActionStore
 }
 
 /**

@@ -56,7 +56,7 @@ class AutopilotViewModel @Inject constructor(
  * toggle — those have their own panels. Autopilot is the umbrella
  * pause button.
  *
- * Foreground services (LumiListenerService, etc.) keep running while
+ * Foreground services (MytharaWakeListenerService, etc.) keep running while
  * autopilot is off — so flipping it back on doesn't pay the
  * cold-start cost. The flag is checked at dispatch time, not at
  * subscription time.
