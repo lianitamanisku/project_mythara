@@ -5,6 +5,9 @@ import android.app.Activity
 import android.content.pm.PackageManager
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import com.meta.wearable.dat.core.Wearables
+import com.meta.wearable.dat.core.types.Permission
+import com.meta.wearable.dat.core.types.PermissionStatus
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
@@ -69,7 +72,22 @@ fun GlassesPanel() {
     val regError by GlassesDatFacade.lastRegistrationError.collectAsState()
     val sessionError by GlassesDatFacade.lastSessionError.collectAsState()
     val needsGlassesAppUpdate by GlassesDatFacade.glassesAppUpdateRequired.collectAsState()
+    val cameraPerm by GlassesDatFacade.cameraPermission.collectAsState()
     val coroutineScope = rememberCoroutineScope()
+
+    // DAT-side CAMERA permission launcher — wraps Stella's permission
+    // UI behind a single button tap. The result drops back into the
+    // facade's `cameraPermission` flow so the panel re-renders.
+    val cameraPermLauncher = rememberLauncherForActivityResult(
+        Wearables.RequestPermissionContract(),
+    ) { result ->
+        result.onSuccess { status ->
+            coroutineScope.launch { GlassesDatFacade.refreshCameraPermission() }
+        }.onFailure { err, _ ->
+            // Even on failure, re-probe so the state matches reality.
+            coroutineScope.launch { GlassesDatFacade.refreshCameraPermission() }
+        }
+    }
 
     // Runtime BLUETOOTH_CONNECT (API 31+) check + request. Without
     // this, every state path is moot — the SDK can't see anything.
@@ -229,10 +247,27 @@ fun GlassesPanel() {
                         )
                     }
                 }
+                if (cameraPerm != GlassesDatFacade.DatPermission.Granted &&
+                    !needsGlassesAppUpdate
+                ) {
+                    Spacer(Modifier.height(6.dp))
+                    Text(
+                        text = "${Glyph.Dot} dat camera permission: ${cameraPerm.name}",
+                        color = MytharaColors.Mustard,
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                    Text(
+                        text = "${Glyph.AccentBar} Mythara needs the glasses-side camera permission " +
+                            "from Stella before starting a session — granting Android's CAMERA " +
+                            "permission to Mythara separately isn't enough. Tap below to ask Stella.",
+                        color = MytharaColors.FgDim,
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                }
                 Spacer(Modifier.height(8.dp))
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    if (needsGlassesAppUpdate) {
-                        Button(
+                    when {
+                        needsGlassesAppUpdate -> Button(
                             onClick = {
                                 (ctx as? Activity)?.let { act ->
                                     coroutineScope.launch {
@@ -245,8 +280,14 @@ fun GlassesPanel() {
                                 contentColor = MytharaColors.Bg,
                             ),
                         ) { Text("update glasses app") }
-                    } else {
-                        Button(
+                        cameraPerm != GlassesDatFacade.DatPermission.Granted -> Button(
+                            onClick = { cameraPermLauncher.launch(Permission.CAMERA) },
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = MytharaColors.Charple,
+                                contentColor = MytharaColors.Bg,
+                            ),
+                        ) { Text("grant glasses camera") }
+                        else -> Button(
                             onClick = { GlassesConnectionService.start(ctx) },
                             colors = ButtonDefaults.buttonColors(
                                 containerColor = MytharaColors.Charple,
@@ -306,8 +347,8 @@ fun GlassesPanel() {
                 }
                 Spacer(Modifier.height(8.dp))
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    if (needsGlassesAppUpdate) {
-                        Button(
+                    when {
+                        needsGlassesAppUpdate -> Button(
                             onClick = {
                                 (ctx as? Activity)?.let { act ->
                                     coroutineScope.launch {
@@ -320,8 +361,14 @@ fun GlassesPanel() {
                                 contentColor = MytharaColors.Bg,
                             ),
                         ) { Text("update glasses app") }
-                    } else {
-                        Button(
+                        cameraPerm != GlassesDatFacade.DatPermission.Granted -> Button(
+                            onClick = { cameraPermLauncher.launch(Permission.CAMERA) },
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = MytharaColors.Charple,
+                                contentColor = MytharaColors.Bg,
+                            ),
+                        ) { Text("grant glasses camera") }
+                        else -> Button(
                             onClick = { GlassesConnectionService.start(ctx) },
                             colors = ButtonDefaults.buttonColors(
                                 containerColor = MytharaColors.Charple,

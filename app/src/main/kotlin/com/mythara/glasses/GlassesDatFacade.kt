@@ -20,6 +20,8 @@ import com.meta.wearable.dat.core.session.DeviceSessionState
 import com.meta.wearable.dat.core.types.DeviceIdentifier
 import com.meta.wearable.dat.core.types.DeviceSessionError
 import com.meta.wearable.dat.core.types.LinkState
+import com.meta.wearable.dat.core.types.Permission
+import com.meta.wearable.dat.core.types.PermissionStatus
 import com.meta.wearable.dat.core.types.RegistrationState
 import kotlinx.coroutines.withTimeoutOrNull
 import com.meta.wearable.dat.display.Display
@@ -127,6 +129,18 @@ object GlassesDatFacade {
     private val _glassesAppUpdateRequired = MutableStateFlow(false)
     val glassesAppUpdateRequired: StateFlow<Boolean> = _glassesAppUpdateRequired.asStateFlow()
 
+    /** Per-device DAT permission status for CAMERA. The SDK exposes this
+     *  separately from Android runtime permissions — granting Mythara
+     *  android.permission.CAMERA does NOT grant DAT camera access on the
+     *  glasses; the user has to confirm via the Stella companion app.
+     *  When this is Denied the device kills any session that adds the
+     *  Stream capability — surfaces as SESSION_ENDED_BY_DEVICE. The
+     *  panel uses this to gate "start session" on a "grant glasses
+     *  camera permission" button. */
+    enum class DatPermission { Unknown, Granted, Denied }
+    private val _cameraPermission = MutableStateFlow(DatPermission.Unknown)
+    val cameraPermission: StateFlow<DatPermission> = _cameraPermission.asStateFlow()
+
     private val _events = MutableSharedFlow<GlassesEvent>(
         extraBufferCapacity = 8,
         onBufferOverflow = BufferOverflow.DROP_OLDEST,
@@ -203,6 +217,26 @@ object GlassesDatFacade {
         _glassesAppUpdateRequired.value = false
     }
 
+    /** Re-query the DAT-side camera permission status and mirror into
+     *  [cameraPermission]. Should be called after a Stella permission
+     *  prompt completes, and at facade init. */
+    suspend fun refreshCameraPermission() {
+        Wearables.checkPermissionStatus(Permission.CAMERA).fold(
+            onSuccess = { status ->
+                _cameraPermission.value = when (status) {
+                    PermissionStatus.Granted -> DatPermission.Granted
+                    PermissionStatus.Denied -> DatPermission.Denied
+                    else -> DatPermission.Unknown
+                }
+                Log.d(TAG, "DAT camera permission -> ${_cameraPermission.value}")
+            },
+            onFailure = { err, _ ->
+                Log.w(TAG, "checkPermissionStatus(CAMERA) failed: ${err.description}")
+                _cameraPermission.value = DatPermission.Unknown
+            },
+        )
+    }
+
     /** Build a session against a display-capable device, then attach the
      *  camera stream + display capability. Returns true once both
      *  capabilities have reported their STARTED state. */
@@ -221,6 +255,20 @@ object GlassesDatFacade {
         }
 
         _lastSessionError.value = null
+
+        // Confirm DAT-side camera permission before opening a stream.
+        // The session can `STARTING` even without it, but the moment we
+        // call addStream the device tears the session down with
+        // SESSION_ENDED_BY_DEVICE (no specific second-error case is
+        // emitted; that's why this looks like a mystery from outside).
+        refreshCameraPermission()
+        if (_cameraPermission.value != DatPermission.Granted) {
+            val msg = "DAT camera permission is ${_cameraPermission.value}; " +
+                "Mythara needs Stella's camera permission for glasses streaming"
+            Log.w(TAG, msg)
+            _lastSessionError.value = "PERMISSION_DENIED: $msg"
+            return false
+        }
 
         // Wait for a CONNECTED display-capable device to actually exist
         // in the SDK's view before invoking createSession. AutoDeviceSelector
@@ -442,6 +490,12 @@ object GlassesDatFacade {
                     RegistrationState.UNREGISTERING -> GlassesConnectionState.Initialized
                     RegistrationState.REGISTERING -> _connectionState.value
                     else -> _connectionState.value
+                }
+                // Once REGISTERED, do an initial camera-permission probe
+                // so the panel can surface the "grant glasses camera"
+                // button without waiting for a failed session attempt.
+                if (state == RegistrationState.REGISTERED) {
+                    runCatching { refreshCameraPermission() }
                 }
             }
         }
