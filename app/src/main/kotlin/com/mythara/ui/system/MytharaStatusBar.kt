@@ -21,6 +21,8 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.asPaddingValues
+import androidx.compose.foundation.layout.displayCutout
 import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -145,17 +147,26 @@ fun MytharaStatusBar(modifier: Modifier = Modifier) {
         }
     }
 
+    // Pixel-tuned safe-area padding. The system reports BOTH the
+    // statusBars inset (height of the system status bar zone, 0 in
+    // launcher mode where we hide it) AND the displayCutout inset
+    // (height of the camera hole-punch area). On Pixel 10 Pro the
+    // pinhole centre sits ~36-40dp from the top edge — we take the
+    // MAX of (displayCutout.top, statusBars.top, PIXEL_FLOOR) so
+    // any non-cutout-reporting Pixel class still gets enough room.
+    val cutoutTopDp = WindowInsets.displayCutout.asPaddingValues().calculateTopPadding()
+    val statusTopDp = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
+    val safeTopDp = maxOf(cutoutTopDp.value, statusTopDp.value, PIXEL_PINHOLE_FLOOR_DP.toFloat())
+
     Box(
         modifier = modifier
             .fillMaxWidth()
-            // First push past the system status bar inset (camera
-            // notch / hole-punch height) so content lands BELOW the
-            // physical pinhole instead of behind it. windowInsetsPadding
-            // returns 0 when the system bar is hidden, so we ALSO
-            // lift by an explicit STATUS_BAR_TOP_PAD_DP — Pixel 10
-            // Pro's centred punch-hole sits ~22dp from the top edge.
-            .windowInsetsPadding(WindowInsets.statusBars)
-            .padding(top = STATUS_BAR_TOP_PAD_DP.dp)
+            // Top padding = max of system insets + Pixel-class
+            // floor. This puts the strip cleanly below the camera
+            // pinhole on every Pixel device shipped 2023+ (10 Pro,
+            // 9 Pro, 9 Pro Fold outer + inner) without needing
+            // per-device hardcodes.
+            .padding(top = safeTopDp.dp)
             .clip(RoundedCornerShape(bottomStart = 14.dp, bottomEnd = 14.dp))
             .background(MytharaColors.Bg)
             .padding(horizontal = 14.dp, vertical = 4.dp)
@@ -380,15 +391,12 @@ internal const val STRIP_HEIGHT_DP = 32
 private const val SIGNAL_BAR_COUNT = 4
 private const val BATTERY_ICON_DP = 16
 
-/** Extra top padding beyond WindowInsets.statusBars to clear the
- *  camera hole-punch. windowInsetsPadding returns 0 when the
- *  system bar is hidden (which it is in launcher mode), so we
- *  hand-tune this for modern centred-pinhole devices. ~22dp lands
- *  the strip cleanly below the Pixel 10 Pro / Galaxy S-series
- *  hole-punch. Devices with no notch / cutout simply gain a
- *  small extra top margin which reads as breathing room rather
- *  than a defect. */
-private const val STATUS_BAR_TOP_PAD_DP = 22
+/** Minimum top padding for Pixel-class devices when the system
+ *  doesn't report a useful inset (launcher mode hides statusBars
+ *  to 0; some devices under-report displayCutout). 40dp clears
+ *  the centred pinhole on Pixel 10 Pro / 9 Pro / 9 Pro Fold
+ *  comfortably with a few dp of breathing room. */
+private const val PIXEL_PINHOLE_FLOOR_DP = 40
 
 // Palette for the new status indicators. Purple for signal so it
 // reads as a Mythara accent (matches the rose petal palette).

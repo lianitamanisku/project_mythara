@@ -6,6 +6,9 @@ import androidx.room.Room
 import androidx.room.RoomDatabase
 import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
+import com.mythara.memory.graph.GraphEdge
+import com.mythara.memory.graph.GraphEntity
+import com.mythara.memory.graph.GraphMemoryDao
 import com.mythara.secret.observe.speaker.EnrolledSpeaker
 import com.mythara.secret.observe.speaker.SpeakerDao
 import dagger.Module
@@ -16,13 +19,19 @@ import dagger.hilt.components.SingletonComponent
 import javax.inject.Singleton
 
 @Database(
-    entities = [LearningEntity::class, EnrolledSpeaker::class],
-    version = 2,
+    entities = [
+        LearningEntity::class,
+        EnrolledSpeaker::class,
+        GraphEntity::class,
+        GraphEdge::class,
+    ],
+    version = 3,
     exportSchema = false,
 )
 abstract class LearningVaultDb : RoomDatabase() {
     abstract fun learnings(): LearningDao
     abstract fun speakers(): SpeakerDao
+    abstract fun graph(): GraphMemoryDao
 
     companion object {
         const val DATABASE_NAME = "mythara_learning_vault.db"
@@ -54,6 +63,53 @@ abstract class LearningVaultDb : RoomDatabase() {
                 )
             }
         }
+
+        /**
+         * v2 → v3: add the temporal-knowledge-graph tables for the
+         * Graphiti-inspired agent memory. Two new tables (entities
+         * + edges) with their indexes; existing learnings + speakers
+         * survive untouched.
+         */
+        val MIGRATION_2_3 = object : Migration(2, 3) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS `graph_entities` (
+                        `id` TEXT NOT NULL PRIMARY KEY,
+                        `kind` TEXT NOT NULL,
+                        `name` TEXT NOT NULL,
+                        `nameKey` TEXT NOT NULL,
+                        `createdAtMs` INTEGER NOT NULL,
+                        `attrsJson` TEXT,
+                        `conf` REAL NOT NULL,
+                        `synced` INTEGER NOT NULL
+                    )
+                    """.trimIndent(),
+                )
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_graph_entities_kind` ON `graph_entities` (`kind`)")
+                db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS `index_graph_entities_nameKey` ON `graph_entities` (`nameKey`)")
+
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS `graph_edges` (
+                        `id` TEXT NOT NULL PRIMARY KEY,
+                        `subjectId` TEXT NOT NULL,
+                        `predicate` TEXT NOT NULL,
+                        `objectId` TEXT NOT NULL,
+                        `validAtMs` INTEGER NOT NULL,
+                        `validUntilMs` INTEGER,
+                        `createdAtMs` INTEGER NOT NULL,
+                        `factText` TEXT,
+                        `conf` REAL NOT NULL,
+                        `synced` INTEGER NOT NULL
+                    )
+                    """.trimIndent(),
+                )
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_graph_edges_subjectId_predicate` ON `graph_edges` (`subjectId`, `predicate`)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_graph_edges_objectId` ON `graph_edges` (`objectId`)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_graph_edges_createdAtMs` ON `graph_edges` (`createdAtMs`)")
+            }
+        }
     }
 }
 
@@ -70,7 +126,7 @@ object LearningVaultModule {
     @Singleton
     fun provideLearningVaultDb(@ApplicationContext ctx: Context): LearningVaultDb =
         Room.databaseBuilder(ctx, LearningVaultDb::class.java, LearningVaultDb.DATABASE_NAME)
-            .addMigrations(LearningVaultDb.MIGRATION_1_2)
+            .addMigrations(LearningVaultDb.MIGRATION_1_2, LearningVaultDb.MIGRATION_2_3)
             // Belt-and-braces: if a hand-rolled migration ever lands in a
             // future version-bump and trips over a corner case, drop and
             // recreate. Acceptable pre-public-release.
@@ -84,4 +140,8 @@ object LearningVaultModule {
     @Provides
     @Singleton
     fun provideSpeakerDao(db: LearningVaultDb): SpeakerDao = db.speakers()
+
+    @Provides
+    @Singleton
+    fun provideGraphMemoryDao(db: LearningVaultDb): GraphMemoryDao = db.graph()
 }
