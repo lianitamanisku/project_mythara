@@ -195,25 +195,36 @@ class AgentLoop @Inject constructor(
         }
 
         // Skill-save offer prompt — when the previous turn chained
-        // 3+ automation tools, the SkillSuggestionStore stashed the
+        // 2+ automation tools, the SkillSuggestionStore stashed the
         // tool list so this turn can deterministically tell the model
         // "offer to save this as a skill". One-shot: store.consume()
         // clears the stash so we don't loop.
+        //
+        // Wording is explicit about overriding the conflicting rules
+        // in voiceSystem ("no sign-offs", "just answer", "max 40
+        // words") — without that override the model deletes the offer
+        // because the static prompt's brevity directive dominates.
         val skillOfferSystem: ChatMessage? = skillSuggestions.consume()?.let { chain ->
             android.util.Log.d(TAG, "injecting skill-save offer for chain: $chain")
             ChatMessage(
                 role = "system",
                 content =
-                    "SKILL-SAVE MOMENT — your previous turn chained these automation tools in order: " +
-                        chain.joinToString(" → ") +
-                        ". This reads as a reusable procedure the user might want to run again. " +
-                        "At the END of your normal reply this turn, append a SHORT follow-up offer " +
-                        "(in the same message, not a new turn) — e.g. \"want me to save this as a skill " +
-                        "so you can run it next time?\" Word count exception: this offer is on top of the " +
-                        "usual 1–2 sentence budget. " +
-                        "If the user agrees in a future turn, call save_skill with a clear name + the " +
-                        "exact steps + a short description. If you've already offered this in a recent " +
-                        "turn and the user demurred, skip the offer (don't nag).",
+                    "SKILL-SAVE MOMENT — REQUIRED ACTION THIS TURN.\n" +
+                        "Your previous turn chained these automation tools in order: " +
+                        chain.joinToString(" → ") + ".\n\n" +
+                        "You MUST end this turn's reply with a short follow-up offer asking the user " +
+                        "if they want to save this as a reusable skill. Suggested wording: " +
+                        "\"want me to save this as a skill so you can run it next time?\" " +
+                        "(rephrase naturally; keep it under 15 words).\n\n" +
+                        "OVERRIDES TO THE VOICE-SYSTEM RULES FOR THIS TURN ONLY:\n" +
+                        "  • The 'no sign-offs, just answer' rule does NOT apply — this offer IS the " +
+                        "intended sign-off.\n" +
+                        "  • The 40-word reply budget is increased by ~15 words for the offer.\n" +
+                        "  • A question back to the user is permitted (normally discouraged).\n\n" +
+                        "Format: normal reply (acknowledging what you did), then ONE blank line, then " +
+                        "the offer sentence. Do NOT call save_skill yet — wait for the user's yes/no " +
+                        "next turn. If they say yes, call save_skill with a clear name + the exact " +
+                        "tools + a short description. If they say no or change topic, drop it.",
             )
         }
         // Final mood for downstream prosody (TTS pitch/rate, EL voice
