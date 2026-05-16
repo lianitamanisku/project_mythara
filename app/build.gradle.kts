@@ -1,3 +1,5 @@
+import java.util.Properties
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
@@ -6,6 +8,22 @@ plugins {
     alias(libs.plugins.kotlin.ksp)
     alias(libs.plugins.hilt)
 }
+
+// Capability Expansion v3 — Meta DAT SDK auth values. The SDK's config
+// reader literally rejects the string "0" as a placeholder (verified
+// by disassembling DatConfiguration$Companion) so the get-started doc's
+// "use 0 for APPLICATION_ID in Developer Mode" is a lie — Developer
+// Mode still needs a real ID + token from
+//   https://wearables.developer.meta.com/
+// We read both from `local.properties` (gitignored) so they never end
+// up in source control. Empty values are tolerated — the SDK will just
+// keep registrationState at UNAVAILABLE until they're filled in.
+val mwdatLocalProps = Properties().apply {
+    val f = rootProject.file("local.properties")
+    if (f.exists()) f.inputStream().use { load(it) }
+}
+val mwdatApplicationId = mwdatLocalProps.getProperty("mwdat_application_id", "")
+val mwdatClientToken = mwdatLocalProps.getProperty("mwdat_client_token", "")
 
 android {
     namespace = "com.mythara"
@@ -35,6 +53,12 @@ android {
         ndk {
             abiFilters += listOf("arm64-v8a")
         }
+
+        // Meta DAT SDK metadata placeholders — substituted into the
+        // <meta-data> tags in AndroidManifest.xml. Values come from
+        // local.properties (see top of file).
+        manifestPlaceholders["mwdat_application_id"] = mwdatApplicationId
+        manifestPlaceholders["mwdat_client_token"] = mwdatClientToken
     }
 
     buildTypes {

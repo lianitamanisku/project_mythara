@@ -156,19 +156,26 @@
         </service>
 
         <!-- Meta DAT SDK config (Capability Expansion v3).
-             APPLICATION_ID = 0 is the documented Developer-Mode value;
-             a production build would pull a real ID from the Wearables
-             Developer Center. DAM_ENABLED = true unlocks the Display
-             capability (renderable UI on the glasses); without it,
-             addDisplay() returns an error. The CLIENT_TOKEN entry is
-             empty in Developer Mode and ignored by the SDK at runtime
-             but the SDK's manifest validator wants the key present. -->
+             APPLICATION_ID + CLIENT_TOKEN are substituted at build time
+             from local.properties via Gradle manifest placeholders. See
+             app/build.gradle.kts for the read path. Get the values by
+             registering an app at https://wearables.developer.meta.com/
+             then dropping these lines in local.properties (gitignored):
+                 mwdat_application_id=<your numeric app id>
+                 mwdat_client_token=<your client token>
+             The SDK's config reader rejects the string "0" as a
+             placeholder (verified by disassembling DatConfiguration$Companion)
+             so the get-started doc's "use 0 in Developer Mode" is wrong.
+             registrationState stays UNAVAILABLE until real values land.
+             DAM_ENABLED = true unlocks the Display capability
+             (renderable UI on the glasses); without it, addDisplay()
+             returns an error. -->
         <meta-data
             android:name="com.meta.wearable.mwdat.APPLICATION_ID"
-            android:value="0" />
+            android:value="${mwdat_application_id}" />
         <meta-data
             android:name="com.meta.wearable.mwdat.CLIENT_TOKEN"
-            android:value="" />
+            android:value="${mwdat_client_token}" />
         <meta-data
             android:name="com.meta.wearable.mwdat.DAM_ENABLED"
             android:value="true" />
