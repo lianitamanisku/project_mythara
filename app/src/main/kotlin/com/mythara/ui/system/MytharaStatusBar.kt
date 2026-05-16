@@ -465,13 +465,13 @@ fun MytharaStatusBar(
                         fontWeight = FontWeight.Medium,
                     )
                     WifiIcon(active = network.isWifi, accent = SIGNAL_COLOR, sizeDp = 14)
-                    // Dummy black round spacer between WiFi and
-                    // phone-signal icons. Visually represents
-                    // the camera pinhole's spot so the minimized
+                    // Two dummy black round spacers between WiFi
+                    // and phone-signal icons. Visually represent
+                    // the camera-cutout zone so the minimized
                     // pill reads as if it threads around the
-                    // cutout, even though the pill actually sits
-                    // BELOW the cutout. Non-interactive — pure
-                    // visual stand-in.
+                    // hole. Non-interactive — pure visual
+                    // stand-ins.
+                    CutoutSpacerDot()
                     CutoutSpacerDot()
                     PhoneSignalIcon(active = network.hasCellular, accent = SIGNAL_COLOR, sizeDp = 14)
                     Box(
@@ -940,8 +940,8 @@ private const val ROSE_DP = 33
 private const val PTT_BUTTON_DP = 27
 
 /** Top padding from the screen top to the pill's top edge —
- *  user-specified flat value. 74 → 54 per user request. */
-private const val TOP_PADDING_DP = 54
+ *  user-specified flat value. 54 → 60 per user request. */
+private const val TOP_PADDING_DP = 60
 
 /** Width fraction of the pill when collapsed (rose + MYTHARA
  *  only, no status cluster). 0.32 ≈ 1/3 of the screen — wide
