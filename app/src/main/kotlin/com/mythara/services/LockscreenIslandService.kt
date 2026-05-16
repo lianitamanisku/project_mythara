@@ -219,22 +219,26 @@ class LockscreenIslandService : Service() {
             setContent {
                 MytharaTheme {
                     // The overlay hosts the SAME consolidated
-                    // collapsible Dynamic Island the in-app
-                    // surface uses — so tapping it from another
-                    // app's foreground (or the home screen) gives
-                    // the full control surface: rose spin,
-                    // expand-to-show-status, PTT mic, Me avatar
-                    // → launch, all the indicators. The user can
-                    // control Mythara without leaving whatever
-                    // they're currently in.
+                    // Dynamic Island the in-app surface uses, in
+                    // its EXPANDED state by default — so users
+                    // see the full status pill (clock + signal
+                    // + M● + I● + Me + 🎙 + battery + MYTHARA)
+                    // floating over whichever app they're in.
+                    // alwaysExpanded = true hard-locks the
+                    // pill open so the overlay never collapses
+                    // back to the small rose+MYTHARA form (the
+                    // user's explicit ask: "that status pill
+                    // must be visible over other apps instead
+                    // of the current one. The status must be
+                    // the new overlay").
                     com.mythara.ui.system.MytharaStatusBar(
+                        alwaysExpanded = true,
                         onOpenAboutMe = {
                             // From overlay context the activity
                             // isn't on the back stack — launch
                             // a fresh task and let MainActivity
                             // route to AboutMe via the deep-link
-                            // intent extra (handled by
-                            // MainActivity.handleOverlayRoute).
+                            // intent extra.
                             val intent = Intent(this@LockscreenIslandService, MainActivity::class.java)
                                 .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                                 .putExtra(EXTRA_OPEN_ROUTE, "about-me")

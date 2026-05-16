@@ -111,6 +111,22 @@ import java.util.Locale
 fun MytharaStatusBar(
     modifier: Modifier = Modifier,
     onOpenAboutMe: () -> Unit = {},
+    /**
+     * When true, the pill is hard-locked to the EXPANDED state —
+     * full-width with all status indicators visible from first
+     * paint, no collapse on tap, no auto-collapse timer. Used by
+     * [com.mythara.services.LockscreenIslandService] so the
+     * over-other-apps overlay shows the full status pill at all
+     * times (the user explicitly asked for this: "the status pill
+     * must be visible over other apps instead of the current
+     * one"). The rose still spins on tap; only the collapse
+     * toggle is suppressed.
+     *
+     * The in-app surface leaves this at its default false so the
+     * pill keeps the iPhone-style collapse / tap-to-expand UX
+     * inside Mythara itself.
+     */
+    alwaysExpanded: Boolean = false,
 ) {
     val ctx = LocalContext.current
 
@@ -218,7 +234,13 @@ fun MytharaStatusBar(
     //
     // Auto-collapse after AUTO_COLLAPSE_MS so a user who taps to
     // glance doesn't have to tap again to reclaim the space.
-    var expanded by remember { mutableStateOf(false) }
+    // `alwaysExpanded` clamps the state — overlay host wants the
+    // full pill at all times; in-app host wants the user-toggled
+    // collapse / expand behaviour. Either way the local state
+    // variable still exists so the rose-spin animation and the
+    // width-fraction animateFloatAsState below stay uniform
+    // across both code paths.
+    var expanded by remember { mutableStateOf(alwaysExpanded) }
     val widthFraction by animateFloatAsState(
         targetValue = if (expanded) 1f else COLLAPSED_WIDTH_FRACTION,
         animationSpec = tween(
@@ -237,8 +259,12 @@ fun MytharaStatusBar(
     // toggled (LaunchedEffect cancels + relaunches on key
     // change). Tap during the expanded window resets to a fresh
     // window via the user.
-    LaunchedEffect(expanded) {
-        if (expanded) {
+    LaunchedEffect(expanded, alwaysExpanded) {
+        // Skip the auto-collapse timer when the host wants
+        // always-expanded — that's the explicit contract for the
+        // overlay (visible status pill in every foreground
+        // context).
+        if (expanded && !alwaysExpanded) {
             kotlinx.coroutines.delay(AUTO_COLLAPSE_MS)
             expanded = false
         }
@@ -252,7 +278,11 @@ fun MytharaStatusBar(
     val rotation = remember { androidx.compose.animation.core.Animatable(0f) }
     val pulseScale = remember { androidx.compose.animation.core.Animatable(1f) }
     val onPillTap: () -> Unit = {
-        expanded = !expanded
+        // Toggle collapse only when the host allows it; when
+        // alwaysExpanded the rose still spins on tap but the
+        // pill stays full-width (overlay contract — see
+        // alwaysExpanded param doc).
+        if (!alwaysExpanded) expanded = !expanded
         DynamicIslandSink.clear()
         scope.launch {
             rotation.snapTo(0f)
