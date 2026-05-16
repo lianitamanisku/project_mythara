@@ -197,31 +197,35 @@ class LockscreenIslandService : Service() {
         // reach the underlying app. Acceptable because the pill
         // is small and the alternative (WRAP_CONTENT width with
         // updateViewLayout calls every expand) is heavier.
-        // FLAG_NOT_FOCUSABLE was dropped — keeping it blocked
-        // ComposeView's pointer-input from receiving touches
-        // even with FLAG_NOT_TOUCH_MODAL allowing pass-through.
-        // Without FLAG_NOT_FOCUSABLE the overlay can take input
-        // focus when the user taps it (which is what we want
-        // for clicks to fire), and FLAG_NOT_TOUCH_MODAL still
-        // lets touches OUTSIDE the window's bounds fall through
-        // to the underlying app — so scrolling Reddit while
-        // the overlay floats above still works.
+        // Window-flag posture for an overlay that:
+        //  • LETS underlying-app touches fall through anywhere the
+        //    overlay doesn't paint (FLAG_NOT_TOUCH_MODAL)
+        //  • NEVER steals key/IME focus from the activity below
+        //    (FLAG_NOT_FOCUSABLE). The soft keyboard requires the
+        //    activity's window to have IME focus; if the overlay
+        //    is focusable, the IME tries to attach to IT instead
+        //    of MainActivity and the keyboard never pops up when
+        //    the user taps a TextField anywhere in Mythara.
+        //  • Touch events DO still arrive at the ComposeView even
+        //    when the host window is not focusable — `.clickable`
+        //    and `pointerInput` operate on touch dispatch, not
+        //    focus, so the pill and the teardrop launchers stay
+        //    tappable.
+        //  • LAYOUT_NO_LIMITS / IN_SCREEN so the pill can sit in
+        //    the cutout zone at the very top of the display.
+        //  • SHOW_WHEN_LOCKED so the pill remains visible on the
+        //    lock screen.
         //
-        // FLAG_ALT_FOCUSABLE_IM is critical: the overlay window
-        // is focusable for TOUCH (so taps register on the pill),
-        // but this flag tells the IME (soft keyboard) to NOT bind
-        // to this window. Without it, every TextField tap in the
-        // host activity tries to attach the IME to the overlay
-        // window instead — symptom: keyboard never comes up when
-        // the user taps a text input anywhere in Mythara. With
-        // ALT_FOCUSABLE_IM the IME ignores the overlay entirely
-        // and attaches to MainActivity's window where the focused
-        // EditText / TextField actually lives.
-        val flags = WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
+        // We previously tried FLAG_ALT_FOCUSABLE_IM as a way to
+        // keep focus while excluding the IME; on this device
+        // family it doesn't reliably free up IME focus when the
+        // overlay window is on top, so we go back to the simpler
+        // FLAG_NOT_FOCUSABLE posture.
+        val flags = WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+            WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
             WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS or
             WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
-            WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED or
-            WindowManager.LayoutParams.FLAG_ALT_FOCUSABLE_IM
+            WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED
         // Overlay window height starts SMALL — just enough for
         // the collapsed circle (+ its safeTopDp top inset).
         // 130dp covers safeTopDp (60dp) + pill height (45dp) +
