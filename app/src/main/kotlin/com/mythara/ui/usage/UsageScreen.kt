@@ -85,6 +85,7 @@ class UsageViewModel @Inject constructor(
             val rows: List<MiniMaxUsageClient.ModelRemaining>,
             val rawBody: String,
             val fetchedAtMs: Long,
+            val authPath: MiniMaxUsageClient.AuthPath,
         ) : Ui
         data class Error(val message: String) : Ui
         data object NeedsApiKey : Ui
@@ -104,6 +105,7 @@ class UsageViewModel @Inject constructor(
                             rows = fetched.rows.sortedBy { r -> r.modelName },
                             rawBody = fetched.rawBody,
                             fetchedAtMs = fetched.fetchedAtMs,
+                            authPath = fetched.authPath,
                         )
                     },
                     onFailure = { e ->
@@ -119,6 +121,7 @@ class UsageViewModel @Inject constructor(
 @Composable
 fun UsageScreen(
     onBack: () -> Unit,
+    onSignIn: () -> Unit = {},
     vm: UsageViewModel = hiltViewModel(),
 ) {
     val ui by vm.ui.collectAsState()
@@ -172,11 +175,46 @@ fun UsageScreen(
             )
             (ui as? UsageViewModel.Ui.Loaded)?.let { state ->
                 Spacer(Modifier.height(4.dp))
-                Text(
-                    text = "fetched ${formatAge(state.fetchedAtMs)} ago",
-                    color = MytharaColors.FgMute,
-                    style = MaterialTheme.typography.labelSmall,
-                )
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    val authLabel = when (state.authPath) {
+                        MiniMaxUsageClient.AuthPath.WebSession -> "web session"
+                        MiniMaxUsageClient.AuthPath.Bearer -> "Bearer key"
+                    }
+                    val authColor = when (state.authPath) {
+                        MiniMaxUsageClient.AuthPath.WebSession -> MytharaColors.Bok
+                        MiniMaxUsageClient.AuthPath.Bearer -> MytharaColors.Mustard
+                    }
+                    Text(
+                        text = "auth: $authLabel",
+                        color = authColor,
+                        style = MaterialTheme.typography.labelSmall,
+                    )
+                    Text(
+                        text = "·",
+                        color = MytharaColors.FgMute,
+                    )
+                    Text(
+                        text = "fetched ${formatAge(state.fetchedAtMs)} ago",
+                        color = MytharaColors.FgMute,
+                        style = MaterialTheme.typography.labelSmall,
+                    )
+                }
+                if (state.authPath == MiniMaxUsageClient.AuthPath.Bearer) {
+                    Spacer(Modifier.height(2.dp))
+                    TextButton(
+                        onClick = onSignIn,
+                        contentPadding = PaddingValues(horizontal = 0.dp, vertical = 0.dp),
+                    ) {
+                        Text(
+                            text = "${Glyph.DiamondOutline} sign in to web account → token-plan view",
+                            color = MytharaColors.Charple,
+                            style = MaterialTheme.typography.labelMedium,
+                        )
+                    }
+                }
             }
         }
 

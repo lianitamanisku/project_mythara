@@ -97,29 +97,74 @@ class MiniMaxUsageClient @Inject constructor(
         val rows: List<ModelRemaining>,
         val rawBody: String,
         val fetchedAtMs: Long,
+        /** Which auth path the request used. The Bearer path and
+         *  the WebSession path return DIFFERENT scoped views of
+         *  the same endpoint — this lets the screen label which
+         *  surface the user is looking at. */
+        val authPath: AuthPath = AuthPath.Bearer,
     )
+
+    /** Auth path used to make the current request — exposed in
+     *  [FetchResult] so the screen can label the data source
+     *  ("Bearer key" vs "web session"). The two paths return
+     *  different scoped views of the same endpoint. */
+    enum class AuthPath { Bearer, WebSession }
 
     /** Fetch the current usage breakdown + the raw response body so
      *  the screen can show "view raw JSON" for diagnostic comparison
-     *  against Postman / the platform plan dashboard. Returns:
-     *   - Result.success(FetchResult) on a 2xx with parseable payload
-     *   - Result.failure(MissingApiKey) if the user hasn't set an
-     *     API key yet
-     *   - Result.failure(IOException / ApiException) on transport
-     *     or HTTP-error states
+     *  against Postman / the platform plan dashboard.
+     *
+     *  Auth path resolution (in order):
+     *    1. Web-session cookie if [SettingsStore.miniMaxWebSession]
+     *       returns a non-expired session (matches what the
+     *       platform.minimax.io/user-center dashboard sees)
+     *    2. Bearer API key fallback (the original behaviour —
+     *       gives the API-key-holder's view, which is often
+     *       different / more capped)
+     *
+     *  Returns:
+     *    - Result.success(FetchResult) on a 2xx with parseable payload
+     *    - Result.failure(MissingApiKey) if neither auth path is
+     *      configured
+     *    - Result.failure(generic) on transport or HTTP-error states
      */
     suspend fun fetch(): Result<FetchResult> = withContext(Dispatchers.IO) {
-        val key = settings.snapshot().apiKey
-        if (key.isNullOrBlank()) {
+        val webSession = runCatching { settings.miniMaxWebSession() }.getOrNull()
+            ?.takeIf { it.expiresAtMs > System.currentTimeMillis() }
+        val apiKey = settings.snapshot().apiKey
+
+        if (webSession == null && apiKey.isNullOrBlank()) {
             return@withContext Result.failure(MissingApiKey())
         }
+
+        val builder = Request.Builder()
+            .url(USAGE_ENDPOINT)
+            .header("Accept", "application/json")
+        val authPath = if (webSession != null) {
+            // Cookie auth — same shape the browser uses. The
+            // x-group-id header is required alongside the cookie.
+            builder
+                .header(
+                    "Cookie",
+                    "_token=${webSession.token}; " +
+                        "minimax_group_id_v2=${webSession.groupId}",
+                )
+                .header("x-group-id", webSession.groupId)
+                .header("Referer", "https://platform.minimax.io/user-center/payment/token-plan")
+                .header(
+                    "User-Agent",
+                    "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 " +
+                        "(KHTML, like Gecko) Chrome/148.0.0.0 Mobile Safari/537.36",
+                )
+            AuthPath.WebSession
+        } else {
+            // Bearer fallback — the original behaviour.
+            builder.header("Authorization", "Bearer $apiKey")
+            AuthPath.Bearer
+        }
+
         runCatching {
-            val req = Request.Builder()
-                .url(USAGE_ENDPOINT)
-                .header("Authorization", "Bearer $key")
-                .header("Accept", "application/json")
-                .get()
-                .build()
+            val req = builder.get().build()
             http.newCall(req).execute().use { resp ->
                 val body = resp.body?.string().orEmpty()
                 if (!resp.isSuccessful) {
@@ -133,6 +178,7 @@ class MiniMaxUsageClient @Inject constructor(
                     rows = parsed.modelRemains,
                     rawBody = body,
                     fetchedAtMs = System.currentTimeMillis(),
+                    authPath = authPath,
                 )
             }
         }

@@ -41,6 +41,12 @@ class SettingsStore @Inject constructor(
     private val Context.dataStore: DataStore<Preferences> by preferencesDataStore(name = "mythara_settings")
 
     private val keyApiKeyEncrypted = stringPreferencesKey("apiKey.encrypted")
+    /** Captured MiniMax web-session cookies (encrypted JSON
+     *  `{token, groupId, expiresAtMs}`). Used by MiniMaxUsageClient
+     *  to authenticate against the same surface the platform web
+     *  dashboard uses, since Bearer auth gives a different scoped
+     *  view than the user's signed-in browser session. */
+    private val keyMiniMaxWebSessionEncrypted = stringPreferencesKey("miniMaxWebSession.encrypted")
     private val keyRegion          = stringPreferencesKey("region")
     private val keyModel           = stringPreferencesKey("model")
     // Gemini Developer API key — optional secondary credential used
@@ -83,6 +89,38 @@ class SettingsStore @Inject constructor(
     suspend fun setApiKey(plain: String) {
         val ct = aead.encrypt(plain.toByteArray(Charsets.UTF_8), null)
         ctx.dataStore.edit { it[keyApiKeyEncrypted] = Base64.encodeToString(ct, Base64.NO_WRAP) }
+    }
+
+    /** Stored MiniMax web-session, decrypted. Returns null when
+     *  the user hasn't completed the WebView sign-in or the stored
+     *  session has expired (caller checks expiresAtMs). */
+    @kotlinx.serialization.Serializable
+    data class MiniMaxWebSession(
+        val token: String,
+        val groupId: String,
+        val expiresAtMs: Long,
+    )
+
+    private val webSessionJson = kotlinx.serialization.json.Json {
+        ignoreUnknownKeys = true; explicitNulls = false
+    }
+
+    suspend fun miniMaxWebSession(): MiniMaxWebSession? {
+        val raw = ctx.dataStore.data.first()[keyMiniMaxWebSessionEncrypted] ?: return null
+        val plain = tryDecrypt(raw) ?: return null
+        return runCatching {
+            webSessionJson.decodeFromString(MiniMaxWebSession.serializer(), plain)
+        }.getOrNull()
+    }
+
+    suspend fun setMiniMaxWebSession(session: MiniMaxWebSession) {
+        val plain = webSessionJson.encodeToString(MiniMaxWebSession.serializer(), session)
+        val ct = aead.encrypt(plain.toByteArray(Charsets.UTF_8), null)
+        ctx.dataStore.edit { it[keyMiniMaxWebSessionEncrypted] = Base64.encodeToString(ct, Base64.NO_WRAP) }
+    }
+
+    suspend fun clearMiniMaxWebSession() {
+        ctx.dataStore.edit { it.remove(keyMiniMaxWebSessionEncrypted) }
     }
 
     /**

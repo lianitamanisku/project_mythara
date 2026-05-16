@@ -39,6 +39,7 @@ import com.mythara.ui.launcher.SpotlightDrawer
 import com.mythara.ui.permissions.PermissionsScreen
 import com.mythara.ui.system.MytharaStatusBar
 import com.mythara.ui.triage.NotificationTriageScreen
+import com.mythara.ui.usage.MiniMaxWebSignInScreen
 import com.mythara.ui.usage.UsageScreen
 import com.mythara.ui.dashboard.DashboardLayout
 import com.mythara.ui.face.FaceScreen
@@ -251,7 +252,13 @@ fun MytharaRoot(
                                 NotificationTriageScreen(onBack = { nav.popBackStack() })
                             }
                             composable(Routes.Usage) {
-                                UsageScreen(onBack = { nav.popBackStack() })
+                                UsageScreen(
+                                    onBack = { nav.popBackStack() },
+                                    onSignIn = { nav.navigate(Routes.MiniMaxSignIn) },
+                                )
+                            }
+                            composable(Routes.MiniMaxSignIn) {
+                                MiniMaxWebSignInScreen(onBack = { nav.popBackStack() })
                             }
                             composable(Routes.Dashboard) {
                                 // Compact-mode Dashboard — the same
@@ -496,4 +503,8 @@ object Routes {
      *  separate destination so users can reach the tile grid even
      *  on compact phones (previously tablet/foldable-only). */
     const val Dashboard = "dashboard"
+    /** WebView sign-in flow that captures the user's MiniMax web
+     *  session cookies so the Usage screen can show the same data
+     *  as the platform's token-plan dashboard. */
+    const val MiniMaxSignIn = "minimax-signin"
 }
