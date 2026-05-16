@@ -89,6 +89,40 @@ object GlassesDatFacade {
 
     private const val TAG = "Mythara/GlassesDAT"
 
+    /**
+     * Master kill-switch for the glasses display path.
+     *
+     * Flipped to `false` 2026-05-16 — every code-side gate is green
+     * (registration REGISTERED, both DAT permissions Granted, device
+     * compat=COMPATIBLE, retry path clean) but every session attempt
+     * dies at the on-glasses DWA-version handshake:
+     *
+     *   DAT:CORE:SessionChannel: DAM session started but DWA did not
+     *   report its version
+     *   → START_ERROR_DAT_APP_ON_THE_GLASSES_UPDATE_REQUIRED
+     *
+     * which translates to "Mythara's on-glasses DWA bundle was never
+     * deployed to the glasses hardware". That's a deployment-pipeline
+     * gap at Meta's Wearables Developer Center, not something fixable
+     * from inside this APK — the DAT v0.7 program's DWA-publish flow
+     * for third-party Display Glasses apps appears to be gated /
+     * incomplete for our developer account right now.
+     *
+     * While disabled:
+     *   - Application.onCreate still calls [initializeIfAvailable] so
+     *     the SDK boots cleanly (no startup regressions).
+     *   - [startSession] short-circuits with a parked-message so the
+     *     panel never hangs the user on a "STARTING -> STOPPED"
+     *     loop.
+     *   - The panel shows a single "parked" banner instead of the
+     *     pairing / permission / session ladder.
+     *
+     * To re-enable: flip to `true`, ensure the Wearables Developer
+     * Center project has a deployable DWA bundle for `com.mythara.debug`,
+     * then run the panel flow again.
+     */
+    const val DISPLAY_PATH_ENABLED = false
+
     /** Scope for the registration / session / display / stream state
      *  collectors. Cancelled-and-recreated only on full process death;
      *  the [stopSession] path tears down individual collectors with
@@ -295,6 +329,13 @@ object GlassesDatFacade {
      *  camera stream + display capability. Returns true once both
      *  capabilities have reported their STARTED state. */
     suspend fun startSession(): Boolean {
+        if (!DISPLAY_PATH_ENABLED) {
+            val msg = "glasses display path is parked (see DISPLAY_PATH_ENABLED docstring); " +
+                "no session will be opened until Meta's DWA-publish gap is closed"
+            Log.i(TAG, msg)
+            _lastSessionError.value = "PARKED: $msg"
+            return false
+        }
         if (!initializedOnce) {
             Log.w(TAG, "startSession before initializeIfAvailable — no-op")
             return false

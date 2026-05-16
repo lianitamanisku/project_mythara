@@ -128,6 +128,28 @@ fun GlassesPanel() {
         )
         Spacer(Modifier.height(6.dp))
 
+        if (!GlassesDatFacade.DISPLAY_PATH_ENABLED) {
+            Text(
+                text = "${Glyph.Dot} state: parked",
+                color = MytharaColors.FgMute,
+                style = MaterialTheme.typography.bodyMedium,
+            )
+            Spacer(Modifier.height(8.dp))
+            Text(
+                text = "${Glyph.AccentBar} Glasses pairing + permissions are wired end-to-end on " +
+                    "Mythara's side (registration, DAT camera/mic perms, device discovery, retry on " +
+                    "tap), but every session attempt dies at Meta's on-glasses DWA-version handshake — " +
+                    "the SDK's `DAM session started but DWA did not report its version` log line. " +
+                    "That points at a deployment-pipeline gap on Meta's Wearables Developer Center " +
+                    "(no DWA bundle published for this app's package + signature), not anything " +
+                    "fixable from inside this APK. Parked here until that's resolved upstream — flip " +
+                    "GlassesDatFacade.DISPLAY_PATH_ENABLED to re-enable.",
+                color = MytharaColors.FgDim,
+                style = MaterialTheme.typography.bodySmall,
+            )
+            return@Column
+        }
+
         if (!btGranted) {
             // GATE 1 — Bluetooth permission. Show this BEFORE any
             // DAT state because the SDK is blind without it.
