@@ -115,6 +115,8 @@ class ToolRegistry @Inject constructor(
     setAlarmTool: com.mythara.agent.tools.SetAlarmTool,
     screenshotTool: com.mythara.agent.tools.ScreenshotTool,
     searchPhotosTool: com.mythara.agent.tools.SearchPhotosTool,
+    // Phase H — long-term memory introspection.
+    searchMemoryTool: com.mythara.agent.tools.SearchMemoryTool,
     private val mcpRegistry: com.mythara.mcp.McpRegistry,
     private val gate: ConfirmationGate,
     private val allowlist: com.mythara.data.AllowlistStore,
@@ -185,6 +187,7 @@ class ToolRegistry @Inject constructor(
         setAlarmTool,
         screenshotTool,
         searchPhotosTool,
+        searchMemoryTool,
     )
 
     /** Native + currently-known MCP tools, merged. Recomputed on every
