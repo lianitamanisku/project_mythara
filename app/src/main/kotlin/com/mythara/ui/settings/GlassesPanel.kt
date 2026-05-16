@@ -239,9 +239,13 @@ fun GlassesPanel() {
                     }
                     if (needsGlassesAppUpdate) {
                         Text(
-                            text = "${Glyph.AccentBar} Likely cause: the DAT app running on the " +
-                                "glasses needs an update. Tap below to launch Stella's App " +
-                                "Connections update flow.",
+                            text = "${Glyph.AccentBar} Likely cause: the DAT runtime ON THE " +
+                                "GLASSES HARDWARE is outdated. Tap below to deeplink into " +
+                                "Stella's App Connections page, then inside Stella find Mythara " +
+                                "→ tap update → wait for the OTA to physically propagate to the " +
+                                "glasses (can take a few minutes; glasses must be on, charged, " +
+                                "and in BT range). Don't tap start session again until Stella " +
+                                "shows the update as complete.",
                             color = MytharaColors.FgDim,
                             style = MaterialTheme.typography.bodySmall,
                         )
@@ -338,9 +342,12 @@ fun GlassesPanel() {
                 }
                 if (needsGlassesAppUpdate) {
                     Text(
-                        text = "${Glyph.AccentBar} The DAT app running on your glasses needs an " +
-                            "update before Mythara can open a display session. Tap below to launch " +
-                            "Stella's update flow.",
+                        text = "${Glyph.AccentBar} The DAT runtime ON THE GLASSES HARDWARE is " +
+                            "outdated. Tap below to deeplink into Stella's App Connections page, " +
+                            "then inside Stella: find Mythara → tap update → wait for the OTA to " +
+                            "physically propagate to the glasses (glasses must be on, charged, " +
+                            "and in BT range — the progress bar can take a few minutes). Don't " +
+                            "tap restart session until Stella shows the update as complete.",
                         color = MytharaColors.FgDim,
                         style = MaterialTheme.typography.bodySmall,
                     )
