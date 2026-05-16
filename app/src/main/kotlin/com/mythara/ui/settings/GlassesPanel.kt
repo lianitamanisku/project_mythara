@@ -25,6 +25,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -36,6 +37,7 @@ import com.mythara.glasses.GlassesConnectionState
 import com.mythara.glasses.GlassesDatFacade
 import com.mythara.ui.theme.Glyph
 import com.mythara.ui.theme.MytharaColors
+import kotlinx.coroutines.launch
 
 /**
  * Settings panel for the Meta Display Glasses integration.
@@ -66,6 +68,8 @@ fun GlassesPanel() {
     val state by GlassesDatFacade.connectionState.collectAsState()
     val regError by GlassesDatFacade.lastRegistrationError.collectAsState()
     val sessionError by GlassesDatFacade.lastSessionError.collectAsState()
+    val needsGlassesAppUpdate by GlassesDatFacade.glassesAppUpdateRequired.collectAsState()
+    val coroutineScope = rememberCoroutineScope()
 
     // Runtime BLUETOOTH_CONNECT (API 31+) check + request. Without
     // this, every state path is moot — the SDK can't see anything.
@@ -203,7 +207,9 @@ fun GlassesPanel() {
                         color = MytharaColors.Mustard,
                         style = MaterialTheme.typography.bodySmall,
                     )
-                    if (sessionError!!.contains("NO_ELIGIBLE", ignoreCase = true)) {
+                    if (sessionError!!.contains("NO_ELIGIBLE", ignoreCase = true) &&
+                        !needsGlassesAppUpdate
+                    ) {
                         Text(
                             text = "${Glyph.AccentBar} Likely cause: missing or invalid " +
                                 "mwdat_application_id / mwdat_client_token. Register an app at " +
@@ -213,16 +219,41 @@ fun GlassesPanel() {
                             style = MaterialTheme.typography.bodySmall,
                         )
                     }
+                    if (needsGlassesAppUpdate) {
+                        Text(
+                            text = "${Glyph.AccentBar} Likely cause: the DAT app running on the " +
+                                "glasses needs an update. Tap below to launch Stella's App " +
+                                "Connections update flow.",
+                            color = MytharaColors.FgDim,
+                            style = MaterialTheme.typography.bodySmall,
+                        )
+                    }
                 }
                 Spacer(Modifier.height(8.dp))
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Button(
-                        onClick = { GlassesConnectionService.start(ctx) },
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = MytharaColors.Charple,
-                            contentColor = MytharaColors.Bg,
-                        ),
-                    ) { Text("start session") }
+                    if (needsGlassesAppUpdate) {
+                        Button(
+                            onClick = {
+                                (ctx as? Activity)?.let { act ->
+                                    coroutineScope.launch {
+                                        GlassesDatFacade.openDATGlassesAppUpdate(act)
+                                    }
+                                }
+                            },
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = MytharaColors.Charple,
+                                contentColor = MytharaColors.Bg,
+                            ),
+                        ) { Text("update glasses app") }
+                    } else {
+                        Button(
+                            onClick = { GlassesConnectionService.start(ctx) },
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = MytharaColors.Charple,
+                                contentColor = MytharaColors.Bg,
+                            ),
+                        ) { Text("start session") }
+                    }
                     OutlinedButton(
                         onClick = {
                             (ctx as? Activity)?.let { GlassesDatFacade.startUnregistration(it) }
@@ -252,18 +283,53 @@ fun GlassesPanel() {
             GlassesConnectionState.Disconnected -> {
                 Text(
                     text = "${Glyph.AccentBar} Session ended — usually because the glasses were folded, " +
-                        "Bluetooth dropped, or another app took the device. Tap below to retry.",
+                        "Bluetooth dropped, or another app took the device.",
                     color = MytharaColors.FgDim,
                     style = MaterialTheme.typography.bodySmall,
                 )
+                if (!sessionError.isNullOrBlank()) {
+                    Spacer(Modifier.height(6.dp))
+                    Text(
+                        text = "${Glyph.Dot} last error: $sessionError",
+                        color = MytharaColors.Mustard,
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                }
+                if (needsGlassesAppUpdate) {
+                    Text(
+                        text = "${Glyph.AccentBar} The DAT app running on your glasses needs an " +
+                            "update before Mythara can open a display session. Tap below to launch " +
+                            "Stella's update flow.",
+                        color = MytharaColors.FgDim,
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                }
                 Spacer(Modifier.height(8.dp))
-                Button(
-                    onClick = { GlassesConnectionService.start(ctx) },
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = MytharaColors.Charple,
-                        contentColor = MytharaColors.Bg,
-                    ),
-                ) { Text("restart session") }
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    if (needsGlassesAppUpdate) {
+                        Button(
+                            onClick = {
+                                (ctx as? Activity)?.let { act ->
+                                    coroutineScope.launch {
+                                        GlassesDatFacade.openDATGlassesAppUpdate(act)
+                                    }
+                                }
+                            },
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = MytharaColors.Charple,
+                                contentColor = MytharaColors.Bg,
+                            ),
+                        ) { Text("update glasses app") }
+                    } else {
+                        Button(
+                            onClick = { GlassesConnectionService.start(ctx) },
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = MytharaColors.Charple,
+                                contentColor = MytharaColors.Bg,
+                            ),
+                        ) { Text("restart session") }
+                    }
+                }
             }
             GlassesConnectionState.Error -> {
                 Text(

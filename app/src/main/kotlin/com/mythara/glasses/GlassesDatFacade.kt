@@ -14,9 +14,14 @@ import com.meta.wearable.dat.camera.types.StreamState
 import com.meta.wearable.dat.camera.types.VideoQuality
 import com.meta.wearable.dat.core.Wearables
 import com.meta.wearable.dat.core.selectors.AutoDeviceSelector
+import com.meta.wearable.dat.core.selectors.SpecificDeviceSelector
 import com.meta.wearable.dat.core.session.DeviceSession
 import com.meta.wearable.dat.core.session.DeviceSessionState
+import com.meta.wearable.dat.core.types.DeviceIdentifier
+import com.meta.wearable.dat.core.types.DeviceSessionError
+import com.meta.wearable.dat.core.types.LinkState
 import com.meta.wearable.dat.core.types.RegistrationState
+import kotlinx.coroutines.withTimeoutOrNull
 import com.meta.wearable.dat.display.Display
 import com.meta.wearable.dat.display.addDisplay
 import com.meta.wearable.dat.display.removeDisplay
@@ -115,6 +120,13 @@ object GlassesDatFacade {
     private val _lastSessionError = MutableStateFlow<String?>(null)
     val lastSessionError: StateFlow<String?> = _lastSessionError.asStateFlow()
 
+    /** True when the most recent session error was specifically
+     *  DAT_APP_ON_THE_GLASSES_UPDATE_REQUIRED. The panel uses this to
+     *  decide whether to show an "update glasses" action button that
+     *  calls [openDATGlassesAppUpdate]. */
+    private val _glassesAppUpdateRequired = MutableStateFlow(false)
+    val glassesAppUpdateRequired: StateFlow<Boolean> = _glassesAppUpdateRequired.asStateFlow()
+
     private val _events = MutableSharedFlow<GlassesEvent>(
         extraBufferCapacity = 8,
         onBufferOverflow = BufferOverflow.DROP_OLDEST,
@@ -179,6 +191,18 @@ object GlassesDatFacade {
             .onFailure { Log.w(TAG, "startUnregistration threw: ${it.message}") }
     }
 
+    /** Launch the in-Stella flow that updates the DAT app running on
+     *  the glasses themselves. Surface this when [glassesAppUpdateRequired]
+     *  flips true — the SDK refuses to open a session against an outdated
+     *  on-glasses DAT app and reports DAT_APP_ON_THE_GLASSES_UPDATE_REQUIRED. */
+    suspend fun openDATGlassesAppUpdate(activity: Activity) {
+        runCatching { Wearables.openDATGlassesAppUpdate(activity) }
+            .onFailure { Log.w(TAG, "openDATGlassesAppUpdate threw: ${it.message}") }
+        // Optimistically clear the flag — if it's still required after
+        // the user returns, the next startSession attempt will re-flip it.
+        _glassesAppUpdateRequired.value = false
+    }
+
     /** Build a session against a display-capable device, then attach the
      *  camera stream + display capability. Returns true once both
      *  capabilities have reported their STARTED state. */
@@ -197,10 +221,50 @@ object GlassesDatFacade {
         }
 
         _lastSessionError.value = null
+
+        // Wait for a CONNECTED display-capable device to actually exist
+        // in the SDK's view before invoking createSession. AutoDeviceSelector
+        // fails fast with NO_ELIGIBLE_DEVICE if `Wearables.devices` is empty
+        // OR if metadata for the known devices hasn't loaded yet — both
+        // common in the moments right after registration completes. The
+        // wait-loop also gives us a chance to log what the SDK actually
+        // sees so future "no eligible" failures point at a real cause.
+        val targetId: DeviceIdentifier? = withTimeoutOrNull(8_000L) {
+            var found: DeviceIdentifier? = null
+            while (found == null) {
+                val ids = Wearables.devices.value
+                Log.d(TAG, "createSession: ${ids.size} discovered device(s) so far")
+                for (id in ids) {
+                    val metadataFlow = Wearables.devicesMetadata[id]
+                    val device = metadataFlow?.value
+                    if (device != null) {
+                        Log.d(
+                            TAG,
+                            "  device: name=${device.name} link=${device.linkState} " +
+                                "displayCapable=${device.isDisplayCapable()} compat=${device.compatibility}",
+                        )
+                        if (device.linkState == LinkState.CONNECTED && device.isDisplayCapable()) {
+                            found = id
+                            break
+                        }
+                    } else {
+                        Log.d(TAG, "  device: $id — metadata not loaded yet")
+                    }
+                }
+                if (found == null) kotlinx.coroutines.delay(500L)
+            }
+            found
+        }
+        if (targetId == null) {
+            val seen = Wearables.devices.value.size
+            val msg = "no display-capable CONNECTED device after 8s ($seen device(s) discovered)"
+            Log.w(TAG, "createSession: $msg")
+            _lastSessionError.value = "NO_ELIGIBLE_DEVICE: $msg"
+            return false
+        }
+
         var newSession: DeviceSession? = null
-        Wearables.createSession(
-            AutoDeviceSelector(filter = { it.isDisplayCapable() }),
-        ).fold(
+        Wearables.createSession(SpecificDeviceSelector(targetId)).fold(
             onSuccess = { newSession = it },
             onFailure = { err, _ ->
                 Log.w(TAG, "createSession failed: ${err.name}: ${err.description}")
@@ -214,7 +278,11 @@ object GlassesDatFacade {
         // only after we see DeviceSessionState.STARTED.
         sessionErrorJob = scope.launch {
             s.errors.collect { err ->
-                Log.w(TAG, "session.error: ${err.description}")
+                Log.w(TAG, "session.error: ${err.name}: ${err.description}")
+                _lastSessionError.value = "${err.name}: ${err.description}"
+                if (err == DeviceSessionError.DAT_APP_ON_THE_GLASSES_UPDATE_REQUIRED) {
+                    _glassesAppUpdateRequired.value = true
+                }
             }
         }
         sessionStateJob = scope.launch {
