@@ -88,7 +88,11 @@ class MemorySettings @Inject constructor(
             enabled = prefs[keyEnabled] ?: false,
             syncLearnings = prefs[keySyncLearnings] ?: true,
             syncSettings = prefs[keySyncSettings] ?: true,
-            syncChat = prefs[keySyncChat] ?: false,
+            // Phase F — chat transcripts sync by default so a
+            // fresh install / pm clear pulls full history from
+            // peers. Privacy-conscious users can flip the
+            // Settings toggle off.
+            syncChat = prefs[keySyncChat] ?: true,
             lastSyncTs = prefs[keyLastSyncTs] ?: 0L,
             manifestJson = prefs[keyManifestJson],
         )
@@ -103,7 +107,11 @@ class MemorySettings @Inject constructor(
             enabled = prefs[keyEnabled] ?: false,
             syncLearnings = prefs[keySyncLearnings] ?: true,
             syncSettings = prefs[keySyncSettings] ?: true,
-            syncChat = prefs[keySyncChat] ?: false,
+            // Phase F — chat transcripts sync by default so a
+            // fresh install / pm clear pulls full history from
+            // peers. Privacy-conscious users can flip the
+            // Settings toggle off.
+            syncChat = prefs[keySyncChat] ?: true,
             lastSyncTs = prefs[keyLastSyncTs] ?: 0L,
             manifestJson = prefs[keyManifestJson],
         )

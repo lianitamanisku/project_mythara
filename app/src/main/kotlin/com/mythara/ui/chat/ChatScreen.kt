@@ -660,21 +660,23 @@ private fun Transcript(
             .padding(horizontal = 16.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
-        // 1) Past-day pills, oldest first. Each pill toggles the
-        //    expandedDay state; only one can be open at a time
-        //    (tapping another auto-closes the previous).
+        // 1) Past-day pills, oldest first. Each pill is wrapped in
+        //    DayPillRow so the row reads as a single continuous
+        //    timeline with the pill as a date-stamp node.
         for (day in pastDays) {
             val dayItems = groupedByDay[day].orEmpty()
             item("daypill:$day") {
-                DayPill(
-                    dayLabel = prettyDayLabel(day),
-                    iso = day,
-                    itemCount = dayItems.size,
-                    expanded = expandedDay == day,
-                    onToggle = {
-                        expandedDay = if (expandedDay == day) null else day
-                    },
-                )
+                DayPillRow {
+                    DayPill(
+                        dayLabel = prettyDayLabel(day),
+                        iso = day,
+                        itemCount = dayItems.size,
+                        expanded = expandedDay == day,
+                        onToggle = {
+                            expandedDay = if (expandedDay == day) null else day
+                        },
+                    )
+                }
             }
             if (expandedDay == day) {
                 items(dayItems, key = { "${day}::${it.key}" }) { item ->
@@ -683,7 +685,25 @@ private fun Transcript(
             }
         }
 
-        // 2) Brand-new-day bubble — ONLY when today has zero items
+        // 2) Current-day pill — always rendered above today's
+        //    items so the timeline reads as a continuous spine.
+        //    The neon-Bok dot inside the pill (isCurrent=true)
+        //    is the "this is today" affordance. Tap to collapse /
+        //    expand today's section the same way past days work.
+        item("daypill:current:$today") {
+            DayPillRow {
+                DayPill(
+                    dayLabel = prettyDayLabel(today),
+                    iso = today,
+                    itemCount = currentDayItems.size,
+                    expanded = true,
+                    onToggle = { /* today is always expanded */ },
+                    isCurrent = true,
+                )
+            }
+        }
+
+        // 3) Brand-new-day bubble — ONLY when today has zero items
         //    (so first launch in the morning shows a friendly
         //    blank-page state instead of an empty void). Goes
         //    AWAY the moment the user sends their first message.
@@ -696,7 +716,7 @@ private fun Transcript(
             }
         }
 
-        // 3) Today's items — rendered inline, always expanded.
+        // 4) Today's items — rendered inline, always expanded.
         items(currentDayItems, key = { it.key }) { item ->
             RenderChatItem(item, musicMode, onReplayMusic, onReinforce, onSaveLifelineNote, onLoadLifelineNeighbours)
         }
