@@ -547,14 +547,45 @@ private fun HomeScreen(
                 )
             }
         } else {
-            // PTT-first home — three tiers stacked on the round face.
-            Column(
+            // PTT-first home — rose ANCHORED at absolute screen centre
+            // via Box alignment so it never shifts when surrounding
+            // text changes length. The earlier SpaceBetween Column had
+            // the rose move vertically every time the status line
+            // grew/shrank (a long partial transcript pushed the rose
+            // upward, "tap to talk" let it drop back down — read as
+            // "the rose is floating around"). With Box overlays, only
+            // the text tiers reflow; the rose stays put while it spins.
+            Box(
                 modifier = Modifier.fillMaxSize().padding(vertical = 14.dp),
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.SpaceBetween,
+                contentAlignment = Alignment.Center,
             ) {
-                // Top tier: tiny clock + HR.
-                Row(verticalAlignment = Alignment.CenterVertically) {
+                // Centre layer: rose only — fixed 120 dp circle, rotates
+                // around its own centre. Nothing in this layer changes
+                // size with content, so the rose never moves.
+                Box(
+                    modifier = Modifier
+                        .size(120.dp)
+                        .clip(CircleShape)
+                        .combinedClickable(
+                            onClick = { startPtt() },
+                            onLongClick = { showConstellation = true },
+                        ),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    MytharaRose(
+                        modifier = Modifier.fillMaxSize(),
+                        listening = listening,
+                        showRing = listening,
+                    )
+                }
+
+                // Top overlay: tiny clock + HR badge. Aligned to top-
+                // centre of the parent Box — doesn't affect the rose's
+                // centre alignment.
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.align(Alignment.TopCenter),
+                ) {
                     Text(clockLabel, color = DIM, fontSize = 11.sp)
                     Spacer(Modifier.size(10.dp))
                     Text(
@@ -564,42 +595,31 @@ private fun HomeScreen(
                     )
                 }
 
-                // Middle tier: rose + status text.
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Box(
-                        modifier = Modifier
-                            .size(120.dp)
-                            .clip(CircleShape)
-                            .combinedClickable(
-                                onClick = { startPtt() },
-                                onLongClick = { showConstellation = true },
-                            ),
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        MytharaRose(
-                            modifier = Modifier.fillMaxSize(),
-                            listening = listening,
-                            showRing = listening,
-                        )
-                    }
-                    Spacer(Modifier.height(6.dp))
-                    val statusText = when {
-                        listening && partial.isNotBlank() -> partial
-                        listening -> "listening…"
-                        partial.isNotBlank() -> partial
-                        else -> status
-                    }
-                    Text(
-                        text = statusText,
-                        color = if (statusText == status || statusText == "listening…") DIM else Color.White,
-                        fontSize = 11.sp,
-                        textAlign = TextAlign.Center,
-                        modifier = Modifier.padding(horizontal = 18.dp),
-                    )
+                // Status text overlay: sits just below the rose. Aligned
+                // via offset from centre, so even when the text wraps to
+                // two lines (a long partial transcript) the rose above
+                // stays put.
+                val statusText = when {
+                    listening && partial.isNotBlank() -> partial
+                    listening -> "listening…"
+                    partial.isNotBlank() -> partial
+                    else -> status
                 }
+                Text(
+                    text = statusText,
+                    color = if (statusText == status || statusText == "listening…") DIM else Color.White,
+                    fontSize = 11.sp,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier
+                        .align(Alignment.BottomCenter)
+                        .padding(bottom = 38.dp, start = 18.dp, end = 18.dp),
+                )
 
-                // Bottom tier: weather + menu hint.
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                // Bottom overlay: weather + menu hint.
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    modifier = Modifier.align(Alignment.BottomCenter),
+                ) {
                     Text(
                         text = weather,
                         color = BOK,
