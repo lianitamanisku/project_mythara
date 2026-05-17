@@ -11,11 +11,13 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.asPaddingValues
+import androidx.compose.foundation.layout.displayCutout
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.systemBars
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -66,20 +68,33 @@ fun AboutScreen(
         }
     }
 
-    // Phase C — MytharaScaffold provides header (← back / ◇
-    // about); body owns the wordmark + secret-unlock target.
+    // Phase C — MytharaScaffold provides the top inset + 44 dp
+    // header (← back / ◇ about). The body now only pads the
+    // navigation bar at the bottom (the scaffold already handled
+    // the status bar at the top — double-padding pushed content
+    // too far down).
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .padding(WindowInsets.systemBars.asPaddingValues())
+            .padding(WindowInsets.navigationBars.asPaddingValues())
             .verticalScroll(rememberScrollState())
             .padding(horizontal = 16.dp, vertical = 12.dp),
     ) {
 
         // Triple-tap target — the inline wordmark.
+        // windowInsetsPadding(displayCutout) dodges horizontally
+        // centered cameras (Pixel 10 Pro punch-hole, foldable
+        // inner-display cutout) so the brand mark doesn't get
+        // partially eaten by the lens. Plus an explicit top
+        // spacer so the wordmark sits visibly below the cutout
+        // band — without this, the scaffold's status-bar inset
+        // alone isn't enough on devices whose cutout extends
+        // deeper than the status bar height.
+        Spacer(Modifier.height(WORDMARK_TOP_GAP_DP.dp))
         Box(
             modifier = Modifier
                 .fillMaxWidth()
+                .windowInsetsPadding(WindowInsets.displayCutout)
                 .pointerInput(Unit) {
                     detectTapGestures(
                         onTap = {
@@ -176,3 +191,10 @@ private fun Panel(title: String, body: @Composable () -> Unit) {
 
 private const val TRIPLE_TAP_WINDOW_MS = 1500L
 private const val TRIPLE_TAP_REQUIRED = 3
+
+/** Vertical gap above the wordmark, on top of the scaffold's
+ *  status-bar inset, to clear a centred camera punch-hole on
+ *  modern Pixels. Large enough to push the wordmark visibly
+ *  below the cutout band; small enough that the brand mark
+ *  still reads as "page title-ish" rather than floating. */
+private const val WORDMARK_TOP_GAP_DP = 28
