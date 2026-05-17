@@ -38,14 +38,28 @@ class FaceEmbedder @Inject constructor(
 ) {
     @Volatile private var interpreter: Interpreter? = null
     @Volatile private var modelFile: File? = null
+    /** Embedding dim of the loaded model, read from its output
+     *  tensor shape. Different MobileFaceNet variants emit 128-D
+     *  or 192-D vectors; both work because we store length-prefixed
+     *  blobs and the matcher only requires that query + stored
+     *  embeddings have the same size. */
+    @Volatile private var loadedEmbeddingDim: Int = EMBEDDING_DIM
 
     fun isReady(): Boolean {
         if (interpreter != null) return true
         val file = modelLocation()
         if (!file.exists()) return false
         return runCatching {
-            interpreter = Interpreter(file)
+            val itp = Interpreter(file)
+            // Read the actual output dim so we don't allocate the
+            // wrong-sized buffer for a non-128-D variant. Shape is
+            // usually [1, N] where N is the embedding size.
+            val outShape = itp.getOutputTensor(0).shape()
+            val dim = outShape.lastOrNull { it > 1 } ?: EMBEDDING_DIM
+            interpreter = itp
             modelFile = file
+            loadedEmbeddingDim = dim
+            Log.i(TAG, "interpreter ready · embedding dim = $dim")
             true
         }.getOrElse {
             Log.w(TAG, "interpreter init failed: ${it.message}")
@@ -84,7 +98,7 @@ class FaceEmbedder @Inject constructor(
         }
         input.rewind()
 
-        val output = Array(1) { FloatArray(EMBEDDING_DIM) }
+        val output = Array(1) { FloatArray(loadedEmbeddingDim) }
         return runCatching {
             tflite.run(input, output)
             l2Normalise(output[0])

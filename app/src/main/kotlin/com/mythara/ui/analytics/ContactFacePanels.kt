@@ -90,6 +90,11 @@ internal fun FaceSamplesPanel(
         }
     }
 
+    // Re-check on every recomposition (cheap — just a file-exists
+    // call). When the user taps "install face model" this flips
+    // false → true once the download finishes, swapping the CTA.
+    val modelReady = vm.isFaceModelInstalled()
+
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -105,24 +110,40 @@ internal fun FaceSamplesPanel(
                 style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Bold),
                 modifier = Modifier.weight(1f),
             )
-            TextButton(onClick = {
-                picker.launch(
-                    PickVisualMediaRequest(
-                        ActivityResultContracts.PickVisualMedia.ImageOnly,
-                    ),
-                )
-            }) {
-                Text(
-                    text = "${Glyph.DiamondFilled} add samples",
-                    color = MytharaColors.Bok,
-                    style = MaterialTheme.typography.bodySmall,
-                )
+            if (!modelReady) {
+                TextButton(onClick = { vm.installFaceModel(profile.nameKey) }) {
+                    Text(
+                        text = "${Glyph.DiamondFilled} install face model",
+                        color = MytharaColors.Bok,
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                }
+            } else {
+                TextButton(onClick = {
+                    picker.launch(
+                        PickVisualMediaRequest(
+                            ActivityResultContracts.PickVisualMedia.ImageOnly,
+                        ),
+                    )
+                }) {
+                    Text(
+                        text = "${Glyph.DiamondFilled} add samples",
+                        color = MytharaColors.Bok,
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                }
             }
         }
         Text(
-            text = "pick a few clear photos of ${profile.displayName}. Mythara learns " +
-                "their face from these — every future (and recent past) photo of " +
-                "them auto-tags into the grid below.",
+            text = if (!modelReady) {
+                "Mythara needs the MobileFaceNet model (~5 MB) to recognise faces. " +
+                    "Tap 'install face model' once — it downloads in the background " +
+                    "and unlocks face matching for every contact."
+            } else {
+                "pick a few clear photos of ${profile.displayName}. Mythara learns " +
+                    "their face from these — every future (and recent past) photo of " +
+                    "them auto-tags into the grid below."
+            },
             color = MytharaColors.FgDim,
             style = MaterialTheme.typography.bodySmall,
         )

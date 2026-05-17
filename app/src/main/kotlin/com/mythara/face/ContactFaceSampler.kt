@@ -48,28 +48,73 @@ class ContactFaceSampler @Inject constructor(
     private val embedder: FaceEmbedder,
     private val index: ContactFaceIndex,
     private val lifeline: LifelineRepository,
+    private val modelDownloader: FaceEmbedderModelDownloader,
 ) {
     data class IngestResult(
         val urisProcessed: Int,
         val facesFound: Int,
         val embeddingsAdded: Int,
         val embedderReady: Boolean,
+        val modelDownloaded: Boolean = false,
+        val modelDownloadFailed: Boolean = false,
     )
+
+    /** Cheap check the UI panel uses to decide whether to show
+     *  "install face model" vs the "add samples" CTA. Doesn't
+     *  initialise the interpreter — just checks file presence. */
+    fun modelInstalled(): Boolean = modelDownloader.isInstalled()
+
+    /** Triggered explicitly from the UI ("download face model" button)
+     *  or implicitly from [addSamples] when the model isn't installed.
+     *  Returns true if the model is ready after the call. */
+    suspend fun ensureModelInstalled(): Boolean = withContext(Dispatchers.IO) {
+        if (embedder.isReady()) return@withContext true
+        val ok = runCatching { modelDownloader.ensureInstalled() }.getOrDefault(false)
+        if (!ok) return@withContext false
+        // Reset the embedder so it picks up the freshly downloaded
+        // file on its next isReady() call.
+        embedder.isReady()
+    }
 
     /** Process a batch of user-picked sample photos for [nameKey].
      *  Returns counts so the UI can show "added N face samples from
-     *  M photos". */
+     *  M photos". If the face model isn't installed yet, this call
+     *  blocks on a download attempt first — the user just sees one
+     *  longer "processing…" tick instead of an opaque failure. */
     suspend fun addSamples(nameKey: String, uris: List<Uri>): IngestResult = withContext(Dispatchers.IO) {
         if (uris.isEmpty()) return@withContext IngestResult(0, 0, 0, embedder.isReady())
-        val ready = embedder.isReady()
-        if (!ready) {
-            // Model isn't installed yet — still copy the photos into
-            // the samples dir so the nightly ContactFaceIndexWorker
-            // can pick them up once the model lands. We'd need a
-            // companion entry mechanism for that; for now we just
-            // skip + report.
-            Log.w(TAG, "embedder not ready — samples NOT added for $nameKey")
-            return@withContext IngestResult(uris.size, 0, 0, false)
+        var downloaded = false
+        var downloadFailed = false
+        if (!embedder.isReady()) {
+            // First call → block on the download so the user's tap
+            // resolves to either "samples added" or "download failed",
+            // not a silent skip.
+            Log.i(TAG, "face model not present — fetching before ingest…")
+            val ok = runCatching { modelDownloader.ensureInstalled() }.getOrDefault(false)
+            if (!ok) {
+                Log.w(TAG, "model download failed — samples NOT added for $nameKey")
+                return@withContext IngestResult(
+                    urisProcessed = uris.size,
+                    facesFound = 0,
+                    embeddingsAdded = 0,
+                    embedderReady = false,
+                    modelDownloadFailed = true,
+                )
+            }
+            downloaded = true
+            // Reset embedder state so the next isReady() picks up the
+            // freshly downloaded weights.
+            if (!embedder.isReady()) {
+                Log.w(TAG, "model downloaded but embedder still not ready")
+                return@withContext IngestResult(
+                    urisProcessed = uris.size,
+                    facesFound = 0,
+                    embeddingsAdded = 0,
+                    embedderReady = false,
+                    modelDownloaded = true,
+                    modelDownloadFailed = true,
+                )
+            }
         }
         val outDir = File(ctx.filesDir, "contact_face_samples/$nameKey").apply { mkdirs() }
         var totalFaces = 0
@@ -106,6 +151,8 @@ class ContactFaceSampler @Inject constructor(
             facesFound = totalFaces,
             embeddingsAdded = totalAdded,
             embedderReady = true,
+            modelDownloaded = downloaded,
+            modelDownloadFailed = downloadFailed,
         )
     }
 

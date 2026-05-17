@@ -402,12 +402,23 @@ class PeopleViewModel @Inject constructor(
      *  embedded, embeddings land in the face index. Afterwards
      *  retroactively rescans recent lifeline photos that don't yet
      *  have this contact tagged — so adding "Sam's face" instantly
-     *  back-fills the contact's photos grid with existing shots. */
+     *  back-fills the contact's photos grid with existing shots.
+     *
+     *  If the face model isn't installed yet, the sampler blocks on
+     *  a download attempt first; the status message reflects that
+     *  the user just sees "downloading face model…" → "added N
+     *  samples" rather than an opaque failure. */
     fun addFaceSamples(nameKey: String, uris: List<android.net.Uri>) {
         if (uris.isEmpty()) return
+        val needsModel = !faceSampler.modelInstalled()
+        val firstMsg = if (needsModel) {
+            "${Glyph.Ellipsis} downloading face model (~5MB), then processing ${uris.size} photo${if (uris.size == 1) "" else "s"}…"
+        } else {
+            "${Glyph.Ellipsis} processing ${uris.size} photo${if (uris.size == 1) "" else "s"}…"
+        }
         _sampleStatus.value = SampleStatus(
             nameKey = nameKey,
-            message = "${Glyph.Ellipsis} processing ${uris.size} photo${if (uris.size == 1) "" else "s"}…",
+            message = firstMsg,
             inFlight = true,
         )
         viewModelScope.launch {
@@ -419,18 +430,20 @@ class PeopleViewModel @Inject constructor(
                     return@launch
                 }
             if (!result.embedderReady) {
-                _sampleStatus.value = SampleStatus(
-                    nameKey,
-                    "${Glyph.Cross} face model not installed yet — try again after it downloads.",
-                    isError = true,
-                )
+                val why = if (result.modelDownloadFailed) {
+                    "${Glyph.Cross} couldn't download the face model — check connection and tap 'install face model'."
+                } else {
+                    "${Glyph.Cross} face model not installed — tap 'install face model'."
+                }
+                _sampleStatus.value = SampleStatus(nameKey, why, isError = true)
                 return@launch
             }
             val rescanCount = if (result.embeddingsAdded > 0) {
                 runCatching { faceSampler.retroactiveRescan(nameKey) }.getOrDefault(0)
             } else 0
             val msg = buildString {
-                append("${Glyph.Check} added ${result.embeddingsAdded} face sample")
+                if (result.modelDownloaded) append("${Glyph.Check} face model installed · ")
+                append("${if (result.modelDownloaded) "added" else "${Glyph.Check} added"} ${result.embeddingsAdded} face sample")
                 if (result.embeddingsAdded != 1) append("s")
                 append(" from ${result.urisProcessed} photo${if (result.urisProcessed == 1) "" else "s"}")
                 if (result.facesFound == 0 && result.urisProcessed > 0) {
@@ -447,6 +460,29 @@ class PeopleViewModel @Inject constructor(
             )
         }
     }
+
+    /** Manually trigger the face-model download. Surfaced in the
+     *  panel as a button so users can install the model without
+     *  first adding samples (and so a previously failed download
+     *  has a retry path). */
+    fun installFaceModel(nameKey: String) {
+        _sampleStatus.value = SampleStatus(
+            nameKey,
+            "${Glyph.Ellipsis} downloading face model (~5MB)…",
+            inFlight = true,
+        )
+        viewModelScope.launch {
+            val ok = runCatching { faceSampler.ensureModelInstalled() }.getOrDefault(false)
+            _sampleStatus.value = SampleStatus(
+                nameKey,
+                if (ok) "${Glyph.Check} face model installed — you can add samples now."
+                else "${Glyph.Cross} download failed — check your connection and try again.",
+                isError = !ok,
+            )
+        }
+    }
+
+    fun isFaceModelInstalled(): Boolean = faceSampler.modelInstalled()
 
     fun removeFaceSample(sourcePath: String) {
         viewModelScope.launch {
