@@ -6,6 +6,9 @@ import android.graphics.Rect
 import android.util.Log
 import dagger.hilt.android.qualifiers.ApplicationContext
 import org.tensorflow.lite.Interpreter
+import org.tensorflow.lite.gpu.CompatibilityList
+import org.tensorflow.lite.gpu.GpuDelegate
+import org.tensorflow.lite.nnapi.NnApiDelegate
 import java.io.File
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
@@ -38,6 +41,11 @@ class FaceEmbedder @Inject constructor(
 ) {
     @Volatile private var interpreter: Interpreter? = null
     @Volatile private var modelFile: File? = null
+    @Volatile private var activeBackend: Backend = Backend.None
+    // Keep delegate refs alive so Interpreter doesn't read a freed
+    // native pointer. Closed lazily when the embedder is re-init'd.
+    @Volatile private var nnapiDelegate: NnApiDelegate? = null
+    @Volatile private var gpuDelegate: GpuDelegate? = null
     /** Embedding dim of the loaded model, read from its output
      *  tensor shape. Different MobileFaceNet variants emit 128-D
      *  or 192-D vectors; both work because we store length-prefixed
@@ -45,26 +53,83 @@ class FaceEmbedder @Inject constructor(
      *  embeddings have the same size. */
     @Volatile private var loadedEmbeddingDim: Int = EMBEDDING_DIM
 
+    /** Which TFLite backend the interpreter is currently bound to.
+     *  Surfaced via [backendName] so the People panel + Settings can
+     *  show "running on NPU" / "GPU" / "CPU" for diagnostics. */
+    enum class Backend { None, Nnapi, Gpu, Cpu }
+
+    fun backendName(): String = when (activeBackend) {
+        Backend.Nnapi -> "NNAPI (NPU)"
+        Backend.Gpu -> "GPU"
+        Backend.Cpu -> "CPU"
+        Backend.None -> "uninitialised"
+    }
+
     fun isReady(): Boolean {
         if (interpreter != null) return true
         val file = modelLocation()
         if (!file.exists()) return false
-        return runCatching {
-            val itp = Interpreter(file)
-            // Read the actual output dim so we don't allocate the
-            // wrong-sized buffer for a non-128-D variant. Shape is
-            // usually [1, N] where N is the embedding size.
-            val outShape = itp.getOutputTensor(0).shape()
-            val dim = outShape.lastOrNull { it > 1 } ?: EMBEDDING_DIM
-            interpreter = itp
-            modelFile = file
-            loadedEmbeddingDim = dim
-            Log.i(TAG, "interpreter ready · embedding dim = $dim")
-            true
-        }.getOrElse {
-            Log.w(TAG, "interpreter init failed: ${it.message}")
-            false
+        // Try NNAPI → GPU → CPU in that order. The first one whose
+        // Interpreter constructor succeeds wins; the others (and
+        // their delegates) are torn down so they don't leak.
+        return tryInitBackend(Backend.Nnapi, file) ||
+            tryInitBackend(Backend.Gpu, file) ||
+            tryInitBackend(Backend.Cpu, file)
+    }
+
+    private fun tryInitBackend(backend: Backend, file: File): Boolean = runCatching {
+        // Each attempt allocates its own delegate; close any leftover
+        // from a previous failed try before we try again.
+        closeDelegates()
+        val opts = Interpreter.Options()
+        when (backend) {
+            Backend.Nnapi -> {
+                val d = NnApiDelegate()
+                nnapiDelegate = d
+                opts.addDelegate(d)
+                // NNAPI doesn't support all ops; if it can't compile
+                // the model graph at runtime, the Interpreter ctor
+                // throws and we fall through to GPU.
+            }
+            Backend.Gpu -> {
+                if (!CompatibilityList().isDelegateSupportedOnThisDevice) {
+                    Log.i(TAG, "GPU delegate unsupported on this device")
+                    return@runCatching false
+                }
+                val d = GpuDelegate()
+                gpuDelegate = d
+                opts.addDelegate(d)
+            }
+            Backend.Cpu -> {
+                // 4 threads matches the typical face-analysis worker
+                // concurrency; more wastes context on a model this
+                // small.
+                opts.numThreads = 4
+            }
+            Backend.None -> return@runCatching false
         }
+        val itp = Interpreter(file, opts)
+        val outShape = itp.getOutputTensor(0).shape()
+        val dim = outShape.lastOrNull { it > 1 } ?: EMBEDDING_DIM
+        interpreter = itp
+        modelFile = file
+        loadedEmbeddingDim = dim
+        activeBackend = backend
+        Log.i(TAG, "interpreter ready · backend = ${backendName()} · dim = $dim")
+        true
+    }.getOrElse {
+        Log.w(TAG, "$backend init failed: ${it.message}")
+        // Tear down whichever delegate we had attached so the next
+        // attempt doesn't double-attach.
+        closeDelegates()
+        false
+    }
+
+    private fun closeDelegates() {
+        runCatching { nnapiDelegate?.close() }
+        runCatching { gpuDelegate?.close() }
+        nnapiDelegate = null
+        gpuDelegate = null
     }
 
     /**

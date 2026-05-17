@@ -64,6 +64,14 @@ class ContactFaceSampler @Inject constructor(
      *  initialise the interpreter — just checks file presence. */
     fun modelInstalled(): Boolean = modelDownloader.isInstalled()
 
+    /** Human-readable name of the TFLite delegate the face embedder
+     *  picked (NPU / GPU / CPU). Triggers init if needed so the
+     *  caller sees the actual backend, not "uninitialised". */
+    fun backendLabel(): String {
+        embedder.isReady() // warm the interpreter so backend resolves
+        return embedder.backendName()
+    }
+
     /** Triggered explicitly from the UI ("download face model" button)
      *  or implicitly from [addSamples] when the model isn't installed.
      *  Returns true if the model is ready after the call. */

@@ -188,6 +188,13 @@ mwdat-display = { group = "com.meta.wearable", name = "mwdat-display", version.r
 # future use (FaceEmbedder uses raw Interpreter directly).
 tflite-runtime = { group = "org.tensorflow", name = "tensorflow-lite", version.ref = "tflite" }
 tflite-task-vision = { group = "org.tensorflow", name = "tensorflow-lite-task-vision", version.ref = "tfliteTaskVision" }
+# Hardware-acceleration delegates for the face embedder. NNAPI taps
+# the device's NN HAL (Pixel uses the Tensor TPU); GPU falls back to
+# OpenGL ES compute shaders on phones whose NNAPI driver doesn't
+# expose face-model ops. ~10-50× speedup over CPU on a 128-D
+# MobileFaceNet inference on Pixel-class hardware.
+tflite-gpu = { group = "org.tensorflow", name = "tensorflow-lite-gpu", version.ref = "tflite" }
+tflite-gpu-api = { group = "org.tensorflow", name = "tensorflow-lite-gpu-api", version.ref = "tflite" }
 
 
 # Biometric / device-credential unlock at app entry

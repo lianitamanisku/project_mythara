@@ -271,6 +271,11 @@ dependencies {
     // themselves only add ~3 MB to the APK.
     implementation(libs.tflite.runtime)
     implementation(libs.tflite.task.vision)
+    // Hardware-acceleration delegates — FaceEmbedder tries NNAPI
+    // first (Pixel Tensor TPU path) and falls back to the GPU
+    // delegate. CPU is the final fallback if neither initialises.
+    implementation(libs.tflite.gpu)
+    implementation(libs.tflite.gpu.api)
 
     // M5+ deps deferred until their milestones land:
     //   SQLCipher (Observe vault), Argon2 (Secret pw)

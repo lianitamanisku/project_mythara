@@ -184,6 +184,18 @@ internal fun FaceSamplesPanel(
                 style = MaterialTheme.typography.bodySmall,
             )
         }
+
+        // Backend diagnostic — reassures the user the face pipeline
+        // is hardware-accelerated (NNAPI / GPU) rather than CPU. Cheap
+        // to query: short-circuits to a cached field on the embedder.
+        if (modelReady) {
+            Spacer(Modifier.height(6.dp))
+            Text(
+                text = "${Glyph.AccentBar} running on ${vm.faceBackendLabel()}",
+                color = MytharaColors.FgMute,
+                style = MaterialTheme.typography.labelSmall,
+            )
+        }
     }
 }
 

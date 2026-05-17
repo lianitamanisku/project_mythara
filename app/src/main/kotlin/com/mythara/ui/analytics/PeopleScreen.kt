@@ -484,6 +484,11 @@ class PeopleViewModel @Inject constructor(
 
     fun isFaceModelInstalled(): Boolean = faceSampler.modelInstalled()
 
+    /** Active TFLite delegate label ("NNAPI (NPU)" / "GPU" / "CPU"
+     *  / "uninitialised"). Surfaced in the panel footer so the user
+     *  knows the face pipeline is hardware-accelerated. */
+    fun faceBackendLabel(): String = faceSampler.backendLabel()
+
     fun removeFaceSample(sourcePath: String) {
         viewModelScope.launch {
             runCatching { faceSampler.removeSample(sourcePath) }
