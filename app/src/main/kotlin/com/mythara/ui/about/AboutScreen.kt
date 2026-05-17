@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.displayCutout
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -69,52 +70,55 @@ fun AboutScreen(
     }
 
     // Phase C — MytharaScaffold provides the top inset + 44 dp
-    // header (← back / ◇ about). The body now only pads the
-    // navigation bar at the bottom (the scaffold already handled
-    // the status bar at the top — double-padding pushed content
-    // too far down).
-    Column(
+    // header (← back / ◇ about). The body is a Box so we can
+    // anchor the wordmark + tagline at viewport CENTER (per
+    // user request — the brand mark + secret-unlock target
+    // should sit in the middle of the screen, not hugged to
+    // the top) while the panels live in a scrollable bottom
+    // strip beneath.
+    Box(
         modifier = Modifier
             .fillMaxSize()
-            .padding(WindowInsets.navigationBars.asPaddingValues())
-            .verticalScroll(rememberScrollState())
-            .padding(horizontal = 16.dp, vertical = 12.dp),
+            .padding(WindowInsets.navigationBars.asPaddingValues()),
     ) {
 
-        // Triple-tap target — the inline wordmark.
-        // windowInsetsPadding(displayCutout) dodges horizontally
-        // centered cameras (Pixel 10 Pro punch-hole, foldable
-        // inner-display cutout) so the brand mark doesn't get
-        // partially eaten by the lens. Plus an explicit top
-        // spacer so the wordmark sits visibly below the cutout
-        // band — without this, the scaffold's status-bar inset
-        // alone isn't enough on devices whose cutout extends
-        // deeper than the status bar height.
-        Spacer(Modifier.height(WORDMARK_TOP_GAP_DP.dp))
-        Box(
+        // ── Wordmark + tagline — vertically centered ────────────
+        // Alignment.Center anchors this Column to the geometric
+        // middle of the body. windowInsetsPadding(displayCutout)
+        // ensures it dodges any device cutout that intersects
+        // its bounds (foldable inner displays etc.) — though at
+        // viewport center the wordmark is well clear of any
+        // punch-hole on Pixel hardware.
+        Column(
             modifier = Modifier
+                .align(Alignment.Center)
                 .fillMaxWidth()
                 .windowInsetsPadding(WindowInsets.displayCutout)
-                .pointerInput(Unit) {
-                    detectTapGestures(
-                        onTap = {
-                            val now = System.currentTimeMillis()
-                            if (tapCount == 0 || (now - firstTapMs) > TRIPLE_TAP_WINDOW_MS) {
-                                firstTapMs = now
-                                tapCount = 1
-                            } else {
-                                tapCount += 1
-                            }
-                        },
-                    )
-                },
-            contentAlignment = Alignment.Center,
+                .padding(horizontal = 16.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
         ) {
-            MytharaWordmarkInline(fontSize = 28.sp)
-        }
-
-        Spacer(Modifier.height(8.dp))
-        Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+            // Triple-tap target — the inline wordmark.
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .pointerInput(Unit) {
+                        detectTapGestures(
+                            onTap = {
+                                val now = System.currentTimeMillis()
+                                if (tapCount == 0 || (now - firstTapMs) > TRIPLE_TAP_WINDOW_MS) {
+                                    firstTapMs = now
+                                    tapCount = 1
+                                } else {
+                                    tapCount += 1
+                                }
+                            },
+                        )
+                    },
+                contentAlignment = Alignment.Center,
+            ) {
+                MytharaWordmarkInline(fontSize = 28.sp)
+            }
+            Spacer(Modifier.height(8.dp))
             Text(
                 text = "${Glyph.AccentBar} field intelligence in your pocket.",
                 style = MaterialTheme.typography.bodySmall.copy(
@@ -123,50 +127,65 @@ fun AboutScreen(
             )
         }
 
-        Spacer(Modifier.height(28.dp))
+        // ── Panels — bottom 45% of the body, scrollable ─────────
+        // Anchored to BottomCenter so they fill the lower portion
+        // of the screen without overlapping the centered wordmark
+        // above. fillMaxHeight(0.45f) gives a fixed slot; long
+        // panel content scrolls inside.
+        Column(
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .fillMaxWidth()
+                .fillMaxHeight(BOTTOM_PANELS_FRACTION)
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = 16.dp, vertical = 12.dp),
+        ) {
+            Panel("version") {
+                Text(
+                    "0.0.1-debug · MiniMax-M2 family",
+                    color = MytharaColors.Fg, style = MaterialTheme.typography.bodyMedium,
+                )
+            }
 
-        Panel("version") {
-            Text("0.0.1-debug · MiniMax-M2 family", color = MytharaColors.Fg, style = MaterialTheme.typography.bodyMedium)
+            Spacer(Modifier.height(12.dp))
+
+            Panel("privacy") {
+                Text(
+                    "Mythara has no backend, no telemetry, no analytics. The only network calls are to the MiniMax endpoint you configured and (if enabled) your GitHub memory repo.",
+                    color = MytharaColors.FgMute, style = MaterialTheme.typography.bodySmall,
+                )
+                Spacer(Modifier.height(6.dp))
+                Text(
+                    "API keys and the device-secret password stay on the phone, encrypted at rest. Chat history, learnings, and non-secret settings can sync to a private GitHub repo you control.",
+                    color = MytharaColors.FgMute, style = MaterialTheme.typography.bodySmall,
+                )
+            }
+
+            Spacer(Modifier.height(12.dp))
+
+            Panel("created by") {
+                Text(
+                    "Mythara is your personal field intelligence agent.",
+                    color = MytharaColors.Fg, style = MaterialTheme.typography.bodyMedium,
+                )
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    "Built by Ankur (Creator) using Lumi — the powerful mother-ship AI platform Ankur built at CES.",
+                    color = MytharaColors.FgMute, style = MaterialTheme.typography.bodySmall,
+                )
+            }
+
+            Spacer(Modifier.height(12.dp))
+
+            Panel("credits") {
+                Text(
+                    "MiniMax · Charmbracelet (Crush aesthetic) · JetBrains Mono · AndroidX · Shizuku",
+                    color = MytharaColors.FgMute, style = MaterialTheme.typography.bodySmall,
+                )
+            }
+
+            Spacer(Modifier.height(24.dp))
         }
-
-        Spacer(Modifier.height(12.dp))
-
-        Panel("privacy") {
-            Text(
-                "Mythara has no backend, no telemetry, no analytics. The only network calls are to the MiniMax endpoint you configured and (if enabled) your GitHub memory repo.",
-                color = MytharaColors.FgMute, style = MaterialTheme.typography.bodySmall,
-            )
-            Spacer(Modifier.height(6.dp))
-            Text(
-                "API keys and the device-secret password stay on the phone, encrypted at rest. Chat history, learnings, and non-secret settings can sync to a private GitHub repo you control.",
-                color = MytharaColors.FgMute, style = MaterialTheme.typography.bodySmall,
-            )
-        }
-
-        Spacer(Modifier.height(12.dp))
-
-        Panel("created by") {
-            Text(
-                "Mythara is your personal field intelligence agent.",
-                color = MytharaColors.Fg, style = MaterialTheme.typography.bodyMedium,
-            )
-            Spacer(Modifier.height(8.dp))
-            Text(
-                "Built by Ankur (Creator) using Lumi — the powerful mother-ship AI platform Ankur built at CES.",
-                color = MytharaColors.FgMute, style = MaterialTheme.typography.bodySmall,
-            )
-        }
-
-        Spacer(Modifier.height(12.dp))
-
-        Panel("credits") {
-            Text(
-                "MiniMax · Charmbracelet (Crush aesthetic) · JetBrains Mono · AndroidX · Shizuku",
-                color = MytharaColors.FgMute, style = MaterialTheme.typography.bodySmall,
-            )
-        }
-
-        Spacer(Modifier.height(40.dp))
     }
 }
 
@@ -192,9 +211,8 @@ private fun Panel(title: String, body: @Composable () -> Unit) {
 private const val TRIPLE_TAP_WINDOW_MS = 1500L
 private const val TRIPLE_TAP_REQUIRED = 3
 
-/** Vertical gap above the wordmark, on top of the scaffold's
- *  status-bar inset, to clear a centred camera punch-hole on
- *  modern Pixels. Large enough to push the wordmark visibly
- *  below the cutout band; small enough that the brand mark
- *  still reads as "page title-ish" rather than floating. */
-private const val WORDMARK_TOP_GAP_DP = 28
+/** Fraction of the body height reserved for the scrollable
+ *  panels strip at the bottom. The remaining ~55% above is
+ *  empty space surrounding the centered wordmark, anchoring
+ *  the brand mark visually at the screen's middle. */
+private const val BOTTOM_PANELS_FRACTION = 0.45f
