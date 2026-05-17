@@ -293,9 +293,22 @@ class SupertonicTtsEngine @Inject constructor(
         val wav = wavBatch[0]
         // Trim to the actual predicted duration (vocoder pads to
         // the latent length, which is usually a couple frames longer).
+        // duration[0] is in SECONDS — multiply by sample rate for
+        // a sample-count cap. Parenthesise carefully: `?:` binds
+        // tighter than `*`, so without these parens we'd compute
+        // (duration[0] ?: (0f * sr)).toInt() and end up trimming
+        // the wav to LITERAL seconds-count samples (e.g. 2 samples
+        // for a 2.5s utterance instead of 60_000 samples). Result
+        // would be silent audio. Same fix below for wavLen in
+        // sampleNoisyLatent.
         val sr = cfg.sampleRate
-        val realLen = (duration.firstOrNull() ?: 0f * sr).toInt().coerceIn(0, wav.size)
+        val realLen = ((duration.firstOrNull() ?: 0f) * sr).toInt().coerceIn(0, wav.size)
         val trimmed = if (realLen > 0 && realLen < wav.size) wav.copyOfRange(0, realLen) else wav
+        Log.i(
+            TAG,
+            "synth ok · dur=${"%.2f".format(duration.firstOrNull() ?: 0f)}s " +
+                "samples=${trimmed.size} sr=$sr (vocoder emitted ${wav.size})",
+        )
 
         return floatPcmToShortPcmBytes(trimmed)
     }
@@ -309,7 +322,9 @@ class SupertonicTtsEngine @Inject constructor(
         val ccf = cfg.chunkCompressFactor
         val ldim = cfg.latentDim
         val wavLenMax = (duration.maxOrNull() ?: 0f) * sr
-        val wavLen = (duration.firstOrNull() ?: 0f * sr).toLong()
+        // Same precedence trap as in synthesizeWaveform — paren
+        // the null-coalesce BEFORE the multiplication.
+        val wavLen = ((duration.firstOrNull() ?: 0f) * sr).toLong()
         val chunkSize = bcs * ccf
         val latentLen = ((wavLenMax + chunkSize - 1) / chunkSize).toInt()
         val latentDim = ldim * ccf
