@@ -44,6 +44,14 @@ class OnboardingStore @Inject constructor(
         by preferencesDataStore(name = "mythara_onboarding")
 
     private val keyCompleted = booleanPreferencesKey("onboarding.completed")
+    // Phase E — Mythara Phone UI Overhaul. Independent from the
+    // big onboarding gate above: this is just the 3-second "press
+    // & hold anywhere" ghosted-ring coach mark that fades in under
+    // Chat on the first launch after the redesigned amulet ships.
+    // Dismissed by tap; never shown again. Re-run by clearing app
+    // data or by the "re-run onboarding" button which resets BOTH
+    // flags so the user gets the full new-install experience.
+    private val keyAmuletHintSeen = booleanPreferencesKey("amulet.hintSeen")
 
     /** Reactive flow — UI observes to switch out of the onboarding screen. */
     fun completedFlow(): Flow<Boolean> =
@@ -57,6 +65,19 @@ class OnboardingStore @Inject constructor(
 
     /** Reset — used by the "re-run onboarding" button in Settings. */
     suspend fun reset() {
-        ctx.dataStore.edit { it[keyCompleted] = false }
+        ctx.dataStore.edit {
+            it[keyCompleted] = false
+            it[keyAmuletHintSeen] = false
+        }
+    }
+
+    /** "Has the user seen the press-and-hold ghosted-ring coach
+     *  mark yet?" — gates the Phase E first-launch hint that
+     *  teaches the new amulet gesture. */
+    suspend fun isAmuletHintSeen(): Boolean =
+        ctx.dataStore.data.first()[keyAmuletHintSeen] ?: false
+
+    suspend fun markAmuletHintSeen() {
+        ctx.dataStore.edit { it[keyAmuletHintSeen] = true }
     }
 }

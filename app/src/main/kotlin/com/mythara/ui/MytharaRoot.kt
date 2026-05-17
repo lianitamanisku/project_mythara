@@ -18,6 +18,7 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
+import kotlinx.coroutines.launch
 import com.mythara.auth.AuthState
 import com.mythara.ui.about.AboutMeScreen
 import com.mythara.ui.about.AboutScreen
@@ -267,7 +268,40 @@ fun MytharaRoot(
                             ),
                     ) {
                     if (isCompact) {
-                        NavHost(navController = nav, startDestination = Routes.Chat) {
+                        // Phase E — wire MytharaNavTransitions into
+                        // every route. Family dispatch lives in
+                        // TransitionFamily.forRoute(route), keyed on
+                        // the route id. Sibling (Chat ↔ peers) slides
+                        // horizontally; drilldown (Settings, sub-
+                        // panels) fades; modal (Canvas, sign-in,
+                        // secret) scales-fades. PopEnter / PopExit
+                        // mirror their forward counterparts.
+                        NavHost(
+                            navController = nav,
+                            startDestination = Routes.Chat,
+                            enterTransition = {
+                                val target = targetState.destination.route.orEmpty()
+                                when (com.mythara.ui.scaffold.TransitionFamily.forRoute(target)) {
+                                    com.mythara.ui.scaffold.TransitionFamily.Sibling ->
+                                        com.mythara.ui.scaffold.MytharaNavTransitions.SiblingEnter
+                                    com.mythara.ui.scaffold.TransitionFamily.Drilldown ->
+                                        com.mythara.ui.scaffold.MytharaNavTransitions.DrilldownEnter
+                                    com.mythara.ui.scaffold.TransitionFamily.Modal ->
+                                        com.mythara.ui.scaffold.MytharaNavTransitions.ModalEnter
+                                }.invoke(this)
+                            },
+                            exitTransition = {
+                                val target = targetState.destination.route.orEmpty()
+                                when (com.mythara.ui.scaffold.TransitionFamily.forRoute(target)) {
+                                    com.mythara.ui.scaffold.TransitionFamily.Sibling ->
+                                        com.mythara.ui.scaffold.MytharaNavTransitions.SiblingExit
+                                    com.mythara.ui.scaffold.TransitionFamily.Drilldown ->
+                                        com.mythara.ui.scaffold.MytharaNavTransitions.DrilldownExit
+                                    com.mythara.ui.scaffold.TransitionFamily.Modal ->
+                                        com.mythara.ui.scaffold.MytharaNavTransitions.ModalExit
+                                }.invoke(this)
+                            },
+                        ) {
                             composable(Routes.Chat) {
                                 // Phase B — Chat adopts MytharaScaffold
                                 // as a pure architectural wrap. No title
@@ -705,6 +739,39 @@ fun MytharaRoot(
                         )
                     }
 
+                    // Phase E — first-launch amulet coach mark.
+                    // Renders a ghosted PreAmuletRing-style overlay
+                    // with "press & hold anywhere" caption once,
+                    // then persists the dismiss via OnboardingStore.
+                    var showAmuletHint by remember { mutableStateOf(false) }
+                    val onboardingStore = remember {
+                        dagger.hilt.android.EntryPointAccessors.fromApplication(
+                            ctx.applicationContext,
+                            MytharaRootEntryPoint::class.java,
+                        ).onboardingStore()
+                    }
+                    LaunchedEffect(Unit) {
+                        if (!onboardingStore.isAmuletHintSeen()) {
+                            // Small initial delay so the coach mark
+                            // doesn't fight with the first-paint
+                            // chrome animations (status bar appearing,
+                            // nav transitions, etc.).
+                            kotlinx.coroutines.delay(800L)
+                            showAmuletHint = true
+                        }
+                    }
+                    val hintCoroutineScope = androidx.compose.runtime.rememberCoroutineScope()
+                    if (showAmuletHint) {
+                        com.mythara.ui.amulet.AmuletHintOverlay(
+                            onDismissed = {
+                                showAmuletHint = false
+                                hintCoroutineScope.launch {
+                                    runCatching { onboardingStore.markAmuletHintSeen() }
+                                }
+                            },
+                        )
+                    }
+
                     if (secretUnlockOpen) {
                         SecretUnlockDialog(
                             onUnlocked = {
@@ -820,6 +887,10 @@ interface MytharaRootEntryPoint {
      *  PTT-as-Rose press can fire VoiceActionStore.Source.RosePress
      *  without going through a ViewModel constructor. */
     fun voiceActions(): com.mythara.voice.VoiceActionStore
+    /** UI Overhaul Phase E — first-launch amulet coach mark
+     *  reads + writes the "seen" flag here so the hint only
+     *  renders once per fresh install / onboarding reset. */
+    fun onboardingStore(): com.mythara.data.OnboardingStore
 }
 
 /**
@@ -910,7 +981,18 @@ private suspend fun buildAmuletPages(
         }
     }
 
+    // Phase E — command palette as page 0. Single ⋯ chip at 0°
+    // that opens SpotlightDrawer (the existing pull-down search
+    // sheet). Lands the user on a search affordance first; swipe
+    // right to reach the existing menu / ptt / more / apps pages.
+    // Existing chip page indices shift by +1 — the Constellation
+    // paging logic is index-agnostic so this is a pure prepend.
+    val paletteChips = listOf(
+        chipGlyph(0f, "search", "⋯", MytharaColors.Bok) { onNavigate(ROUTE_SPOTLIGHT) },
+    )
+
     return buildList {
+        add(AmuletPage("palette", paletteChips))
         add(AmuletPage("menu", menuChips))
         add(AmuletPage("ptt", pttChips))
         add(AmuletPage("more", moreChips))
