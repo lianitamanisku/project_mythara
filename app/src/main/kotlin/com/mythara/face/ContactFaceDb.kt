@@ -25,10 +25,17 @@ import javax.inject.Singleton
  * matcher considers them all and uses the lowest cosine distance
  * across the contact's embeddings.
  *
- * Privacy: embeddings stay on-device. The vault sync exclusion
- * filter (see MemorySync) excludes this DB by name. Embeddings are
- * not in the chat history, not pushed to the watch, not synced via
- * GitHub. The user can wipe them via the Settings panel.
+ * Privacy + sync (Phase F update): embeddings + their source crop
+ * PNGs now DO sync via [com.mythara.memory.MemorySync] as
+ * `analytics/contact_face_samples.jsonl`. Previously this DB was
+ * deliberately excluded for privacy; the user explicitly reversed
+ * that decision so a fresh install / `pm clear` on any peer device
+ * restores every "this is what Sam looks like" sample they had
+ * uploaded. The repo + chat history are still scrubbed of any
+ * other raw face exposure (no live camera frames, no third-party
+ * faces) — only the user-curated samples + their derived
+ * embeddings travel. The user can wipe everything via the Settings
+ * panel, which also overwrites the synced JSONL on next push.
  */
 @Entity(
     tableName = "contact_face_embeddings",

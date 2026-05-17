@@ -71,6 +71,14 @@ class MemorySync @Inject constructor(
     private val taskRepo: com.mythara.tasks.TaskRepository,
     private val musicVocabulary: com.mythara.music.MusicVocabulary,
     private val graphRepo: com.mythara.memory.graph.GraphMemoryRepository,
+    /** Phase F — contact face index. User-curated face samples + the
+     *  embeddings derived from them are now synced so a fresh
+     *  install (or a `pm clear`) on any peer device restores
+     *  every "this is what Sam looks like" sample the user
+     *  uploaded. Previously deliberately excluded for privacy; the
+     *  user explicitly requested cross-device sync so they don't
+     *  lose what they've taught Mythara. */
+    private val contactFaceIndex: com.mythara.face.ContactFaceIndex,
     @dagger.hilt.android.qualifiers.ApplicationContext private val ctx: android.content.Context,
 ) {
     data class Report(
@@ -457,6 +465,59 @@ class MemorySync @Inject constructor(
                     "mythara: audit log (${auditEntries.size})", written, skipped,
                 )
             }
+
+            // analytics/contact_face_samples.jsonl — user-curated face
+            // samples + their MobileFaceNet embeddings, base64-encoded
+            // inline so a fresh install on any peer device fully
+            // restores "who is who". Crop PNG bytes typically 10-50 KB
+            // each; we cap at MAX_FACE_CROP_BYTES per sample so a
+            // malformed huge file can't blow up the JSONL row.
+            //
+            // Previously deliberately excluded from sync (the user
+            // reversed that decision after losing samples on a
+            // pm clear). Reversal is documented in
+            // ContactFaceDb.kt's header + AboutScreen's privacy
+            // section.
+            val faceSamples = runCatching { contactFaceIndex.dao.listAll() }
+                .getOrDefault(emptyList())
+            if (faceSamples.isNotEmpty()) {
+                val body = faceSamples.joinToString("\n") { row ->
+                    json.encodeToString(
+                        FaceSampleExport.serializer(),
+                        row.toFaceSampleExport(deviceId),
+                    )
+                }
+                putWithCache(
+                    client, cfg, "analytics/contact_face_samples.jsonl", body, manifest,
+                    "mythara: face samples (${faceSamples.size})", written, skipped,
+                )
+            }
+
+            // analytics/contact_avatars.jsonl — base64-encoded
+            // avatar overrides (filesDir/contact_photos/*.jpg) so
+            // a contact's face stays attached on a fresh install.
+            // Sourced from ContactProfileRow.photoUri, filtered to
+            // rows whose path actually exists on disk (some rows
+            // carry stale URIs from a contact whose override was
+            // cleared but the row not yet rebuilt).
+            val avatarRows = runCatching { contactProfiles.dao.listAll() }
+                .getOrDefault(emptyList())
+                .filter { row ->
+                    val p = row.photoUri ?: return@filter false
+                    p.startsWith("/") && runCatching { java.io.File(p).isFile }.getOrDefault(false)
+                }
+            if (avatarRows.isNotEmpty()) {
+                val body = avatarRows.joinToString("\n") { row ->
+                    json.encodeToString(
+                        ContactAvatarExport.serializer(),
+                        row.toAvatarExport(deviceId),
+                    )
+                }
+                putWithCache(
+                    client, cfg, "analytics/contact_avatars.jsonl", body, manifest,
+                    "mythara: contact avatars (${avatarRows.size})", written, skipped,
+                )
+            }
         }
 
         // ---- lifeline/<YYYY-MM>.jsonl — life-timeline photo metadata
@@ -751,6 +812,64 @@ class MemorySync @Inject constructor(
                 }
             }
         }.onFailure { Log.w(tag, "user-aliases pull failed: ${it.message}") }
+
+        // ---- analytics/contact_face_samples.jsonl (Phase F)
+        // Decode each row's embedding + crop PNG, write the PNG to
+        // its original filesDir/contact_face_samples path, upsert
+        // the ContactFaceEmbedding row pointing at the same path.
+        // The path is deterministic (same package = same filesDir
+        // prefix on every device) so the upsert is idempotent
+        // across repeated restores.
+        runCatching {
+            val incoming = readJsonlLines(
+                client, cfg, "analytics/contact_face_samples.jsonl",
+                FaceSampleExport.serializer(),
+            )
+            for (row in incoming) {
+                runCatching {
+                    row.cropPngB64?.let { b64 ->
+                        val bytes = android.util.Base64.decode(b64, android.util.Base64.NO_WRAP)
+                        val target = java.io.File(row.sourcePhotoPath)
+                        target.parentFile?.mkdirs()
+                        if (!target.isFile || target.length() != bytes.size.toLong()) {
+                            target.writeBytes(bytes)
+                        }
+                    }
+                    val emb = android.util.Base64.decode(row.embeddingB64, android.util.Base64.NO_WRAP)
+                    contactFaceIndex.dao.upsert(
+                        com.mythara.face.ContactFaceEmbedding(
+                            nameKey = row.nameKey,
+                            sourcePhotoPath = row.sourcePhotoPath,
+                            embedding = emb,
+                            computedAtMs = row.computedAtMs,
+                            modelVersion = row.modelVersion,
+                        ),
+                    )
+                }
+            }
+        }.onFailure { Log.w(tag, "face-samples pull failed: ${it.message}") }
+
+        // ---- analytics/contact_avatars.jsonl (Phase F)
+        // Decode each row's avatar JPEG bytes, write to the
+        // ContactPhoto.importOverride destination
+        // (filesDir/contact_photos/<nameKey>.jpg), set the
+        // ContactProfileRow.photoUri to the resulting path. The
+        // upsert is keyed on nameKey so it's idempotent.
+        runCatching {
+            val incoming = readJsonlLines(
+                client, cfg, "analytics/contact_avatars.jsonl",
+                ContactAvatarExport.serializer(),
+            )
+            for (row in incoming) {
+                runCatching {
+                    val bytes = android.util.Base64.decode(row.jpegB64, android.util.Base64.NO_WRAP)
+                    val dir = java.io.File(ctx.filesDir, "contact_photos").apply { mkdirs() }
+                    val target = java.io.File(dir, "${row.nameKey}.jpg")
+                    target.writeBytes(bytes)
+                    runCatching { contactProfiles.dao.updatePhotoUri(row.nameKey, target.absolutePath) }
+                }
+            }
+        }.onFailure { Log.w(tag, "contact-avatars pull failed: ${it.message}") }
 
         // ---- analytics/music_vocab.json (first-mint-wins merge)
         runCatching {
@@ -1809,6 +1928,34 @@ class MemorySync @Inject constructor(
         val deviceId: String? = null,
     )
 
+    /** Phase F — wire shape for ContactFaceEmbedding. Embedding is
+     *  base64'd (128-D / 192-D float vector, length-prefixed); crop
+     *  PNG bytes are also base64'd inline (typically 10–50 KB raw
+     *  per face). When the local file is missing or oversize, we
+     *  ship the embedding alone so the matcher can still recognise
+     *  the face after restore even if the visual reference is lost. */
+    @Serializable
+    data class FaceSampleExport(
+        val nameKey: String,
+        val sourcePhotoPath: String,
+        val embeddingB64: String,
+        val computedAtMs: Long,
+        val modelVersion: Int,
+        val cropPngB64: String? = null,
+        val dev: String? = null,
+    )
+
+    /** Phase F — wire shape for a user-curated avatar override
+     *  (filesDir/contact_photos/<nameKey>.jpg). Restore writes the
+     *  JPEG back to the same canonical path + flips the row's
+     *  ContactProfileRow.photoUri. */
+    @Serializable
+    data class ContactAvatarExport(
+        val nameKey: String,
+        val jpegB64: String,
+        val dev: String? = null,
+    )
+
     @Serializable
     data class ChatRowExport(
         val t: Long,
@@ -2005,6 +2152,54 @@ private fun com.mythara.audit.AuditEntry.toExport(syncDeviceId: String): MemoryS
         contactName = contactName,
         deviceId = deviceId ?: syncDeviceId,
     )
+
+/** Phase F — face-sample wire encoder. Embedding goes through
+ *  base64. Crop PNG ALSO goes through base64 when the file
+ *  exists + is under [MAX_FACE_CROP_BYTES] (500 KB hard cap to
+ *  keep one JSONL row well under GitHub's 100 MB file limit
+ *  even at 200+ samples). Missing files → embedding-only export
+ *  so the matcher still works after restore. */
+private fun com.mythara.face.ContactFaceEmbedding.toFaceSampleExport(
+    syncDeviceId: String,
+): MemorySync.FaceSampleExport {
+    val cropB64 = runCatching {
+        val f = java.io.File(sourcePhotoPath)
+        if (f.isFile && f.length() in 1..MAX_FACE_CROP_BYTES) {
+            android.util.Base64.encodeToString(f.readBytes(), android.util.Base64.NO_WRAP)
+        } else null
+    }.getOrNull()
+    return MemorySync.FaceSampleExport(
+        nameKey = nameKey,
+        sourcePhotoPath = sourcePhotoPath,
+        embeddingB64 = android.util.Base64.encodeToString(embedding, android.util.Base64.NO_WRAP),
+        computedAtMs = computedAtMs,
+        modelVersion = modelVersion,
+        cropPngB64 = cropB64,
+        dev = syncDeviceId,
+    )
+}
+
+/** Phase F — avatar-override wire encoder. Reads the JPEG bytes
+ *  at the row's `photoUri` path, base64-encodes them, ships the
+ *  blob with the contact's nameKey. Caller has already filtered
+ *  to rows whose path resolves to an existing file. */
+private fun com.mythara.analytics.ContactProfileRow.toAvatarExport(
+    syncDeviceId: String,
+): MemorySync.ContactAvatarExport {
+    val bytes = runCatching {
+        java.io.File(photoUri!!).readBytes()
+    }.getOrDefault(ByteArray(0))
+    return MemorySync.ContactAvatarExport(
+        nameKey = nameKey,
+        jpegB64 = android.util.Base64.encodeToString(bytes, android.util.Base64.NO_WRAP),
+        dev = syncDeviceId,
+    )
+}
+
+/** Hard cap on a single face crop's encoded byte size — keeps a
+ *  worst-case 200-sample sync well under GitHub's 100 MB file
+ *  limit. Typical face crops are 10–50 KB; 500 KB is generous. */
+private const val MAX_FACE_CROP_BYTES = 500_000L
 
 private fun MemorySync.AuditExport.toRow(): com.mythara.audit.AuditEntry =
     com.mythara.audit.AuditEntry(
