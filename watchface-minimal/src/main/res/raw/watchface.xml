@@ -58,6 +58,18 @@
                 <Image resource="warrior_silhouette" />
             </PartImage>
 
+            <!-- Minute / hour ticks around the perimeter. Same lavender
+                 purple as the time digits + wordmark letters, with a
+                 Gaussian-blur glow baked underneath each tick for the
+                 "neon" look. 60 minute ticks (length 6 px) with longer
+                 ticks at the 12 hour positions (length 14 px). Sits at
+                 the canvas edge, well outside the rose / time / wordmark
+                 zones so it never visually competes. Hidden in ambient
+                 for OLED-burn-in / battery (AOD is bare time only). -->
+            <PartImage x="0" y="0" width="450" height="450">
+                <Image resource="tick_marks" />
+            </PartImage>
+
             <!-- Brand mark: 180×180 rose centred horizontally in the
                  upper third of the face. Tapping it launches the
                  Mythara wear app (PTT-first home) — same gesture
