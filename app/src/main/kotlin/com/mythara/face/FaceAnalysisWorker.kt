@@ -51,7 +51,23 @@ class FaceAnalysisWorker @AssistedInject constructor(
     private val screenStore: GlassesScreenStore,
 ) : CoroutineWorker(context, params) {
 
-    override suspend fun doWork(): Result {
+    override suspend fun doWork(): Result = try {
+        runDetection()
+    } catch (oom: OutOfMemoryError) {
+        // ML Kit's NV21 conversion can spike RAM hard on a big image
+        // even after our downsample gate. Catch it here so the worker
+        // returns a clean failure instead of taking the whole app
+        // process down — the lifeline row stays untagged and the
+        // nightly worker will retry from a fresh process.
+        Log.e(TAG, "OOM analysing photo — releasing and failing softly", oom)
+        runCatching { System.gc() }
+        Result.failure()
+    } catch (t: Throwable) {
+        Log.e(TAG, "unexpected error in face analysis", t)
+        Result.failure()
+    }
+
+    private suspend fun runDetection(): Result {
         val lifelineId = inputData.getLong(KEY_LIFELINE_ID, -1L)
         val recognise = inputData.getBoolean(KEY_RECOGNISE, false)
         if (lifelineId <= 0L) {
@@ -142,11 +158,38 @@ class FaceAnalysisWorker @AssistedInject constructor(
     }
 
     private fun loadBitmap(uri: Uri): Bitmap? = runCatching {
+        // Downsample BEFORE the bitmap lands in RAM. ML Kit face
+        // detection internally allocates an NV21 ByteBuffer of size
+        // ~1.5 × W × H bytes — a raw 12MP phone photo would request
+        // ~75 MB, which OOMs the worker thread. Phone cameras now
+        // route through here (not just the original 1.6 MP glasses
+        // path), so we have to bound the input size ourselves.
+        //
+        // 1280 px on the long edge is the sweet spot: comfortably
+        // above MobileFaceNet's effective resolution (112 × 112 crops
+        // after detection) and below MLKit's allocation cliff, while
+        // still preserving enough detail that small / distant faces
+        // are caught.
+        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        openStream(uri)?.use { BitmapFactory.decodeStream(it, null, bounds) }
+        val srcLong = maxOf(bounds.outWidth, bounds.outHeight)
+        if (srcLong <= 0) return@runCatching null
+        var sample = 1
+        while (srcLong / sample > MAX_LONG_EDGE_PX) sample *= 2
+        val opts = BitmapFactory.Options().apply {
+            inSampleSize = sample
+            // ARGB_8888 is what ML Kit wants — RGB_565 saves memory
+            // but loses precision the face detector relies on for
+            // landmark stability.
+            inPreferredConfig = Bitmap.Config.ARGB_8888
+        }
+        openStream(uri)?.use { BitmapFactory.decodeStream(it, null, opts) }
+    }.getOrNull()
+
+    private fun openStream(uri: Uri): java.io.InputStream? = runCatching {
         when (uri.scheme) {
-            "file" -> BitmapFactory.decodeFile(uri.path)
-            else -> context.contentResolver.openInputStream(uri)?.use {
-                BitmapFactory.decodeStream(it)
-            }
+            "file", null -> uri.path?.let { java.io.FileInputStream(it) }
+            else -> context.contentResolver.openInputStream(uri)
         }
     }.getOrNull()
 
@@ -191,6 +234,11 @@ class FaceAnalysisWorker @AssistedInject constructor(
         private const val TAG = "Mythara/FaceAnalyse"
         const val KEY_LIFELINE_ID = "lifeline_id"
         const val KEY_RECOGNISE = "recognise"
+        /** Max length of the longer image edge after downsample.
+         *  Bounds the NV21 buffer ML Kit allocates per detect() call
+         *  to ~3 MB (1280 × 960 × 1.5) — safe inside the worker's
+         *  256 MB heap even with other work running concurrently. */
+        private const val MAX_LONG_EDGE_PX = 1280
 
         fun enqueue(context: Context, lifelineId: Long, recognise: Boolean) {
             val req = OneTimeWorkRequestBuilder<FaceAnalysisWorker>()
