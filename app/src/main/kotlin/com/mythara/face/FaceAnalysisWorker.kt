@@ -49,6 +49,7 @@ class FaceAnalysisWorker @AssistedInject constructor(
     private val contactRepo: ContactProfileRepository,
     private val interactionRepo: ContactInteractionRepository,
     private val screenStore: GlassesScreenStore,
+    private val unknownFaces: UnknownFaceRepository,
 ) : CoroutineWorker(context, params) {
 
     override suspend fun doWork(): Result = try {
@@ -98,10 +99,31 @@ class FaceAnalysisWorker @AssistedInject constructor(
 
         val matchedKeys = mutableListOf<String>()
         var bestForGlasses: ContactFaceMatcher.MatchCandidate? = null
+        val nowMs = System.currentTimeMillis()
         for (face in faces) {
             val emb = faceEmbedder.embed(bmp, face.box) ?: continue
             val matches = matcher.match(emb, topK = 1)
-            val top = matches.firstOrNull() ?: continue
+            val top = matches.firstOrNull()
+            if (top == null) {
+                // No known contact matched — capture the face into
+                // the unknown-faces cluster so it surfaces in the
+                // People screen's Untagged section. Crop with a bit
+                // of padding so the user has something recognisable
+                // (not just an eyes-and-nose square) when they
+                // promote it.
+                val crop = cropFace(bmp, face.box, padFraction = 0.25f)
+                if (crop != null) {
+                    runCatching {
+                        unknownFaces.ingest(
+                            embedding = emb,
+                            cropBitmap = crop,
+                            lifelineId = lifelineId,
+                            nowMs = nowMs,
+                        )
+                    }
+                }
+                continue
+            }
             matchedKeys += top.nameKey
             // Pick the highest-confidence match across all faces for
             // the "recognise person" → glasses ProfileCard render.
@@ -196,15 +218,7 @@ class FaceAnalysisWorker @AssistedInject constructor(
     private suspend fun maybeSetContactAvatar(nameKey: String, source: Bitmap, box: android.graphics.Rect) {
         val existing = runCatching { contactRepo.dao.byKey(nameKey) }.getOrNull() ?: return
         if (!existing.photoUri.isNullOrBlank()) return
-        // Crop the face out + pad a bit for visual context.
-        val pad = (maxOf(box.width(), box.height()) * 0.25f).toInt()
-        val crop = runCatching {
-            val left = (box.left - pad).coerceAtLeast(0)
-            val top = (box.top - pad).coerceAtLeast(0)
-            val right = (box.right + pad).coerceAtMost(source.width)
-            val bottom = (box.bottom + pad).coerceAtMost(source.height)
-            Bitmap.createBitmap(source, left, top, right - left, bottom - top)
-        }.getOrNull() ?: return
+        val crop = cropFace(source, box, padFraction = 0.25f) ?: return
         // Write to a temp file so ContactPhoto.importOverride can
         // ingest it as a content/file Uri.
         val tmp = File(context.cacheDir, "face_avatar_${UUID.randomUUID()}.png")
@@ -219,6 +233,29 @@ class FaceAnalysisWorker @AssistedInject constructor(
             }
         }
         runCatching { tmp.delete() }
+    }
+
+    /** Crop a face bounding box out of [source] with [padFraction]
+     *  extra padding on each side, so the cropped image shows the
+     *  face plus a bit of head / shoulders context (looks better in
+     *  the UI than a tight skin-only box). Coordinates are clamped
+     *  to the source bitmap dims. Returns null on any failure. */
+    private fun cropFace(
+        source: Bitmap,
+        box: android.graphics.Rect,
+        padFraction: Float,
+    ): Bitmap? {
+        val pad = (maxOf(box.width(), box.height()) * padFraction).toInt()
+        return runCatching {
+            val left = (box.left - pad).coerceAtLeast(0)
+            val top = (box.top - pad).coerceAtLeast(0)
+            val right = (box.right + pad).coerceAtMost(source.width)
+            val bottom = (box.bottom + pad).coerceAtMost(source.height)
+            val w = right - left
+            val h = bottom - top
+            if (w <= 0 || h <= 0) return@runCatching null
+            Bitmap.createBitmap(source, left, top, w, h)
+        }.getOrNull()
     }
 
     private fun parseFirstThree(json: String?): List<String> = runCatching {

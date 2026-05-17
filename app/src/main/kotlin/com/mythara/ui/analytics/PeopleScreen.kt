@@ -27,6 +27,7 @@ import androidx.compose.foundation.layout.systemBars
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -87,9 +88,20 @@ class PeopleViewModel @Inject constructor(
      *  PersonaTraitExtractor writes after every chat turn. Filtered
      *  per-contact when the user selects a profile. */
     private val vault: com.mythara.secret.observe.vault.LearningVault,
+    /** Untagged faces captured by FaceAnalysisWorker — surfaced in
+     *  the new "Untagged faces" section at the top of People. */
+    private val unknownFaces: com.mythara.face.UnknownFaceRepository,
+    private val graphChangeNotifier: com.mythara.analytics.GraphChangeNotifier,
 ) : ViewModel() {
     val profiles: StateFlow<List<ContactProfileRow>> =
         repo.dao.observeAll().stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+
+    /** Live list of un-promoted, un-dismissed face clusters from
+     *  [com.mythara.face.UnknownFaceRepository]. Each entry has a
+     *  crop path the UI renders as a thumbnail + a seenCount so the
+     *  most-frequent unknowns float to the top. */
+    val untaggedFaces: StateFlow<List<com.mythara.face.UnknownFaceRow>> =
+        unknownFaces.observeActive().stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
 
     /**
      * Per-turn-derived persona snapshot for a single contact. Lifted
@@ -247,6 +259,109 @@ class PeopleViewModel @Inject constructor(
             runCatching { repo.dao.updatePhotoUri(nameKey, null) }
         }
     }
+
+    /**
+     * Assign an untagged face to an EXISTING contact. Copies the
+     * embedding into [com.mythara.face.ContactFaceIndex] so future
+     * detections match the contact directly, and (if the contact
+     * has no avatar override yet) silently sets the face crop as
+     * their avatar.
+     */
+    fun assignUntaggedFaceToContact(unknownId: Long, nameKey: String) {
+        viewModelScope.launch {
+            val cropPath = unknownFaces.assignToContact(unknownId, nameKey) ?: return@launch
+            // Silent avatar — only set if the contact doesn't already
+            // have one. The user can always override later via the
+            // existing setContactPhoto flow.
+            val existing = runCatching { repo.dao.byKey(nameKey) }.getOrNull()
+            if (existing != null && existing.photoUri.isNullOrBlank()) {
+                runCatching {
+                    val path = ContactPhoto.importOverride(
+                        appContext, nameKey, android.net.Uri.fromFile(java.io.File(cropPath)),
+                    )
+                    repo.dao.updatePhotoUri(nameKey, path)
+                }
+            }
+            graphChangeNotifier.notifyChanged()
+        }
+    }
+
+    /**
+     * Promote an untagged face into a BRAND-NEW Mythara contact +
+     * (optionally) launch the system Contacts app to also create a
+     * device address-book entry. The face crop becomes the new
+     * contact's avatar; the embedding goes into the face index so
+     * every future detection auto-tags the contact.
+     *
+     * Returns the new contact's nameKey via [onCreated] so the
+     * caller can chain a follow-up action (e.g. launch the system
+     * contact-insert intent).
+     */
+    fun createContactFromUntaggedFace(
+        unknownId: Long,
+        displayName: String,
+        onCreated: (nameKey: String) -> Unit = {},
+    ) {
+        val trimmed = displayName.trim().take(80)
+        if (trimmed.isBlank()) return
+        viewModelScope.launch {
+            val key = canonicalize(trimmed)
+            val now = System.currentTimeMillis()
+            val existing = runCatching { repo.dao.byKey(key) }.getOrNull()
+            if (existing == null) {
+                runCatching {
+                    repo.dao.upsert(
+                        ContactProfileRow(
+                            nameKey = key,
+                            displayName = trimmed,
+                            firstSeenMs = now,
+                            lastInteractionMs = now,
+                            isAutoAdded = false,
+                            lastBuiltMs = now,
+                        ),
+                    )
+                }
+            }
+            // Hand the embedding + crop over to the face index, set
+            // the avatar override from the crop, then pulse the
+            // graph notifier so the People + Insights views refresh.
+            val cropPath = unknownFaces.assignToContact(unknownId, key)
+            if (cropPath != null) {
+                runCatching {
+                    val path = ContactPhoto.importOverride(
+                        appContext, key, android.net.Uri.fromFile(java.io.File(cropPath)),
+                    )
+                    repo.dao.updatePhotoUri(key, path)
+                }
+            }
+            graphChangeNotifier.notifyChanged()
+            onCreated(key)
+        }
+    }
+
+    /** User marked an untagged cluster as "not a person" — keep the
+     *  embedding around with dismissed=1 so future detections of the
+     *  same false-positive face cluster TO it and get silently
+     *  suppressed. */
+    fun dismissUntaggedFace(unknownId: Long) {
+        viewModelScope.launch {
+            unknownFaces.dismiss(unknownId)
+        }
+    }
+
+    /** Hard delete — wipes both the row and the crop file. The face
+     *  may re-cluster from scratch if it appears in a future photo. */
+    fun deleteUntaggedFace(unknownId: Long) {
+        viewModelScope.launch {
+            unknownFaces.delete(unknownId)
+        }
+    }
+
+    private fun canonicalize(name: String): String =
+        name.trim().lowercase()
+            .replace(Regex("[^a-z0-9 ]"), "")
+            .replace(Regex("\\s+"), " ")
+            .trim()
 }
 
 /**
@@ -269,8 +384,11 @@ fun PeopleScreen(
     val refreshing by vm.refreshing.collectAsState()
     val report by vm.lastReport.collectAsState()
     val cleanupStatus by vm.cleanupStatus.collectAsState()
+    val untaggedFaces by vm.untaggedFaces.collectAsState()
     var selectedKey by remember { mutableStateOf<String?>(null) }
     val selected = profiles.firstOrNull { it.nameKey == selectedKey }
+    var assignTarget by remember { mutableStateOf<com.mythara.face.UnknownFaceRow?>(null) }
+    val ctx = LocalContext.current
 
     Column(
         modifier = Modifier
@@ -333,7 +451,9 @@ fun PeopleScreen(
         } else {
             ProfileList(
                 profiles = profiles,
+                untaggedFaces = untaggedFaces,
                 onTap = { selectedKey = it.nameKey },
+                onUntaggedFaceTap = { face -> assignTarget = face },
                 modifier = Modifier.weight(1f),
             )
             Spacer(Modifier.height(10.dp))
@@ -397,15 +517,41 @@ fun PeopleScreen(
             }
         }
     }
+
+    // Untagged-face promote sheet. Lives outside the Column scope so
+    // sheet dismissal doesn't tear down the rest of the screen.
+    assignTarget?.let { face ->
+        AssignFaceSheet(
+            face = face,
+            profiles = profiles,
+            onDismiss = { assignTarget = null },
+            onAssign = { nameKey -> vm.assignUntaggedFaceToContact(face.id, nameKey) },
+            onCreateContact = { displayName, alsoSaveToDevice ->
+                vm.createContactFromUntaggedFace(face.id, displayName) { _ ->
+                    if (alsoSaveToDevice) {
+                        launchAddDeviceContact(
+                            ctx = ctx,
+                            displayName = displayName,
+                            avatarFile = java.io.File(face.cropPath),
+                        )
+                    }
+                }
+            },
+            onMarkNotAPerson = { vm.dismissUntaggedFace(face.id) },
+            onDelete = { vm.deleteUntaggedFace(face.id) },
+        )
+    }
 }
 
 @Composable
 private fun ProfileList(
     profiles: List<ContactProfileRow>,
+    untaggedFaces: List<com.mythara.face.UnknownFaceRow>,
     onTap: (ContactProfileRow) -> Unit,
+    onUntaggedFaceTap: (com.mythara.face.UnknownFaceRow) -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    if (profiles.isEmpty()) {
+    if (profiles.isEmpty() && untaggedFaces.isEmpty()) {
         Text(
             text = "${Glyph.CircleOutline} no contacts yet. Mythara learns people from every messaging notification (Teams, WhatsApp, SMS, …) — once a person messages you, they'll show up here automatically.",
             color = MytharaColors.FgDim,
@@ -414,16 +560,14 @@ private fun ProfileList(
         return
     }
 
-    // Three-section layout per user spec:
+    // Four-section layout:
+    //   0) Untagged faces (NEW) — face clusters from photos that
+    //      didn't match any known contact. Horizontal strip of
+    //      thumbnails at the very top so the user can quickly
+    //      decide who's who.
     //   1) Favourites
-    //   2) Discovered (the people Mythara has been told about by
-    //      cross-app notifications — `is_auto_added` true and not
-    //      yet promoted)
-    //   3) Everyone else (manually-added / agent-mediated)
-    //
-    // Sections render in this order so the user can quickly
-    // distinguish "people I told the system about" from "people
-    // the system found for me".
+    //   2) Discovered (cross-app, auto-added)
+    //   3) Everyone else
     val favourites = profiles.filter { it.isFavorite }
     val discovered = profiles.filter { !it.isFavorite && it.isAutoAdded }
     val everyoneElse = profiles.filter { !it.isFavorite && !it.isAutoAdded }
@@ -432,6 +576,20 @@ private fun ProfileList(
         modifier = modifier.fillMaxWidth(),
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
+        if (untaggedFaces.isNotEmpty()) {
+            item("h-untagged") {
+                SectionLabel(
+                    text = "${Glyph.DiamondOutline} untagged faces",
+                    sub = "${untaggedFaces.size} face${if (untaggedFaces.size == 1) "" else "s"} found in your photos · tap to label",
+                )
+            }
+            item("untagged-strip") {
+                UntaggedFacesStrip(
+                    faces = untaggedFaces,
+                    onTap = onUntaggedFaceTap,
+                )
+            }
+        }
         if (favourites.isNotEmpty()) {
             item("h-fav") {
                 SectionLabel(text = "${Glyph.DiamondFilled} favourites")
@@ -452,13 +610,106 @@ private fun ProfileList(
             }
         }
         if (everyoneElse.isNotEmpty()) {
-            if (favourites.isNotEmpty() || discovered.isNotEmpty()) {
+            if (favourites.isNotEmpty() || discovered.isNotEmpty() || untaggedFaces.isNotEmpty()) {
                 item("h-rest") {
                     SectionLabel(text = "${Glyph.AccentBar} everyone else")
                 }
             }
             items(everyoneElse, key = { "e-" + it.nameKey }) { p ->
                 ProfileRow(p, onTap = { onTap(p) })
+            }
+        }
+    }
+}
+
+/**
+ * Horizontal strip of cropped face thumbnails for the new
+ * "Untagged faces" section. Each thumbnail shows the cropped face
+ * plus a small overlay with the seen-count ("3×") so the user
+ * knows which unknowns are recurring vs one-shot detections.
+ *
+ * Tapping a thumbnail opens [AssignFaceSheet] (mounted by
+ * PeopleScreen) where the user can promote, dismiss, or delete.
+ */
+@Composable
+private fun UntaggedFacesStrip(
+    faces: List<com.mythara.face.UnknownFaceRow>,
+    onTap: (com.mythara.face.UnknownFaceRow) -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .horizontalScroll(rememberScrollState())
+            .padding(vertical = 4.dp),
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        for (face in faces) {
+            UntaggedFaceThumb(face = face, onTap = { onTap(face) })
+        }
+    }
+}
+
+@Composable
+private fun UntaggedFaceThumb(
+    face: com.mythara.face.UnknownFaceRow,
+    onTap: () -> Unit,
+) {
+    val ctx = LocalContext.current
+    var bmp by remember(face.cropPath) {
+        mutableStateOf<androidx.compose.ui.graphics.ImageBitmap?>(null)
+    }
+    LaunchedEffect(face.cropPath) {
+        bmp = withContext(Dispatchers.IO) {
+            runCatching {
+                android.graphics.BitmapFactory.decodeFile(face.cropPath)?.asImageBitmap()
+            }.getOrNull()
+        }
+    }
+    Box(
+        modifier = Modifier
+            .size(76.dp)
+            .clip(RoundedCornerShape(38.dp))
+            .background(MytharaColors.SurfaceMid)
+            .border(2.dp, MytharaColors.Charple, RoundedCornerShape(38.dp))
+            .clickable { onTap() },
+    ) {
+        val b = bmp
+        if (b != null) {
+            Image(
+                bitmap = b,
+                contentDescription = "untagged face",
+                modifier = Modifier
+                    .size(76.dp)
+                    .clip(RoundedCornerShape(38.dp)),
+                contentScale = ContentScale.Crop,
+            )
+        } else {
+            Box(
+                modifier = Modifier.size(76.dp),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(
+                    text = "?",
+                    color = MytharaColors.FgDim,
+                    style = MaterialTheme.typography.titleMedium,
+                )
+            }
+        }
+        // Seen-count overlay so the user can spot recurring faces
+        // quickly. Bottom-right circle with a small purple chip.
+        if (face.seenCount > 1) {
+            Box(
+                modifier = Modifier
+                    .align(Alignment.BottomEnd)
+                    .padding(2.dp)
+                    .background(MytharaColors.Charple, RoundedCornerShape(10.dp))
+                    .padding(horizontal = 6.dp, vertical = 2.dp),
+            ) {
+                Text(
+                    text = "${face.seenCount}×",
+                    color = MytharaColors.Fg,
+                    style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
+                )
             }
         }
     }
