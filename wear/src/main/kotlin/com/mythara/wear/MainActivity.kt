@@ -70,9 +70,8 @@ import com.google.android.gms.wearable.Wearable
 import com.mythara.wear.resonance.ResonancePad
 import com.mythara.wear.resonance.ResonanceStore
 import com.mythara.wear.ui.ConstellationOverlay
-import com.mythara.wear.ui.EcgLine
 import com.mythara.wear.ui.MytharaRose
-import androidx.compose.foundation.layout.width
+import com.mythara.wear.ui.RoseWithGlow
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.ui.input.pointer.pointerInput
 import kotlinx.coroutines.launch
@@ -549,24 +548,27 @@ private fun HomeScreen(
                 )
             }
         } else {
-            // PTT-first home — rose ANCHORED at absolute screen centre
-            // via Box alignment so it never shifts when surrounding
-            // text changes length. The earlier SpaceBetween Column had
-            // the rose move vertically every time the status line
-            // grew/shrank (a long partial transcript pushed the rose
-            // upward, "tap to talk" let it drop back down — read as
-            // "the rose is floating around"). With Box overlays, only
-            // the text tiers reflow; the rose stays put while it spins.
+            // Minimalist home — rose with purple particle glow at
+            // centre, MYTHARA wordmark beneath. Nothing else.
+            // Gestures kept:
+            //   tap rose       → start PTT
+            //   long-press     → open Constellation
+            //   drag-up screen → open Constellation
+            //   wrist-shake    → start PTT
+            // Listening feedback is the rose's own ring + faster pulse
+            // (no status text needed).
             Box(
-                modifier = Modifier.fillMaxSize().padding(vertical = 14.dp),
+                modifier = Modifier.fillMaxSize(),
                 contentAlignment = Alignment.Center,
             ) {
-                // Centre layer: rose only — fixed 120 dp circle, rotates
-                // around its own centre. Nothing in this layer changes
-                // size with content, so the rose never moves.
+                // Centre: rose + glow stack, wrapped in a clickable Box
+                // so the tap target covers both the rose and the
+                // immediate halo around it. The glow extends beyond the
+                // rose itself, so a 180 dp tap area gives the user
+                // forgiveness for slightly off-centre taps.
                 Box(
                     modifier = Modifier
-                        .size(120.dp)
+                        .size(180.dp)
                         .clip(CircleShape)
                         .combinedClickable(
                             onClick = { startPtt() },
@@ -574,77 +576,26 @@ private fun HomeScreen(
                         ),
                     contentAlignment = Alignment.Center,
                 ) {
-                    MytharaRose(
+                    RoseWithGlow(
                         modifier = Modifier.fillMaxSize(),
+                        roseSize = 120.dp,
                         listening = listening,
-                        showRing = listening,
                     )
                 }
 
-                // Top overlay: tiny clock + live ECG strip. Aligned to
-                // top-centre of the parent Box — doesn't affect the
-                // rose's centre alignment. The ECG is a scrolling QRS
-                // waveform driven by the actual BPM (60_000 / bpm ms
-                // per beat); falls back to a dim flat line when no
-                // fresh reading is available so the layout doesn't
-                // jump as samples come and go.
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier.align(Alignment.TopCenter),
-                ) {
-                    Text(clockLabel, color = DIM, fontSize = 11.sp)
-                    Spacer(Modifier.size(10.dp))
-                    EcgLine(
-                        bpm = hrBpm,
-                        modifier = Modifier
-                            .width(46.dp)
-                            .height(14.dp),
-                    )
-                }
-
-                // Status text overlay: sits just below the rose. Aligned
-                // via offset from centre, so even when the text wraps to
-                // two lines (a long partial transcript) the rose above
-                // stays put.
-                val statusText = when {
-                    listening && partial.isNotBlank() -> partial
-                    listening -> "listening…"
-                    partial.isNotBlank() -> partial
-                    else -> status
-                }
+                // MYTHARA wordmark — purple, sat just below the rose.
+                // Aligned to BottomCenter with padding so it floats
+                // independently of the rose; the rose stays centred
+                // regardless of any wordmark size changes later.
                 Text(
-                    text = statusText,
-                    color = if (statusText == status || statusText == "listening…") DIM else Color.White,
-                    fontSize = 11.sp,
+                    text = "MYTHARA",
+                    color = PURPLE,
+                    fontSize = 13.sp,
                     textAlign = TextAlign.Center,
                     modifier = Modifier
                         .align(Alignment.BottomCenter)
-                        .padding(bottom = 38.dp, start = 18.dp, end = 18.dp),
+                        .padding(bottom = 26.dp),
                 )
-
-                // Bottom overlay: weather + menu hint.
-                Column(
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    modifier = Modifier.align(Alignment.BottomCenter),
-                ) {
-                    Text(
-                        text = weather,
-                        color = BOK,
-                        fontSize = 9.sp,
-                        textAlign = TextAlign.Center,
-                        modifier = Modifier.clickable {
-                            weather = "…"
-                            scope.launch { weather = loadWeather(ctx) }
-                        },
-                    )
-                    Spacer(Modifier.height(2.dp))
-                    Text(
-                        text = "↑ menu",
-                        color = MUTE,
-                        fontSize = 8.sp,
-                        textAlign = TextAlign.Center,
-                    )
-                }
             }
         }
 
