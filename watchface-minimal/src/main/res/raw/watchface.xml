@@ -232,11 +232,45 @@
                 </Text>
             </PartText>
 
-            <!-- ECG strip — subtle purple QRS-T waveform with a baked-
-                 in sweep gradient. -->
-            <PartImage x="115" y="340" width="220" height="24">
-                <Image resource="ecg_wave" />
-            </PartImage>
+            <!-- Latest Mythara agent message — fed by the :wear
+                 InsightComplicationService (the same provider the
+                 tactical face's "AGENT MESSAGE" slot uses). Rendered
+                 in purple jetbrains_mono_regular (terminal-style
+                 monospace). Uses [COMPLICATION.TEXT] for both
+                 SHORT_TEXT and LONG_TEXT types — tactical proves
+                 that's the working expression for either. -->
+            <ComplicationSlot slotId="3" x="20" y="335" width="410" height="30"
+                supportedTypes="SHORT_TEXT LONG_TEXT EMPTY">
+                <BoundingOval x="0" y="0" width="410" height="30" />
+                <DefaultProviderPolicy
+                    primaryProvider="com.mythara.debug/com.mythara.wear.complications.InsightComplicationService"
+                    primaryProviderType="LONG_TEXT"
+                    defaultSystemProvider="WATCH_BATTERY"
+                    defaultSystemProviderType="SHORT_TEXT" />
+                <Complication type="LONG_TEXT">
+                    <PartText x="0" y="0" width="410" height="30">
+                        <Text align="CENTER" maxLines="1">
+                            <Font family="jetbrains_mono_regular" size="13"
+                                weight="NORMAL" slant="NORMAL"
+                                color="#ff9b86ff">
+                                <Template><![CDATA[%s]]><Parameter expression="[COMPLICATION.TEXT]" /></Template>
+                            </Font>
+                        </Text>
+                    </PartText>
+                </Complication>
+                <Complication type="SHORT_TEXT">
+                    <PartText x="0" y="0" width="410" height="30">
+                        <Text align="CENTER" maxLines="1">
+                            <Font family="jetbrains_mono_regular" size="13"
+                                weight="NORMAL" slant="NORMAL"
+                                color="#ff9b86ff">
+                                <Template><![CDATA[%s]]><Parameter expression="[COMPLICATION.TEXT]" /></Template>
+                            </Font>
+                        </Text>
+                    </PartText>
+                </Complication>
+                <Complication type="EMPTY" />
+            </ComplicationSlot>
 
             <!-- HR value beneath the ECG strip — pulled from the
                  HEART_RATE complication provider. -->
