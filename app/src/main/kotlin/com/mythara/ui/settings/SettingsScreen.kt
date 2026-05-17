@@ -437,6 +437,51 @@ fun SettingsScreen(
                 style = MaterialTheme.typography.bodyMedium,
             )
             Spacer(Modifier.padding(top = 6.dp))
+            // Voice picker — only rendered when the model is
+            // installed, since the voice .json files come with the
+            // initial download. Defaults to whatever's stored in
+            // SettingsStore (M1 on first install). Tts.speak()
+            // reads from the same store on every call so changes
+            // take effect on the next utterance — no restart.
+            if (sState == com.mythara.mic.supertonic.SupertonicModelStore.State.Installed) {
+                Spacer(Modifier.padding(top = 6.dp))
+                var voiceMenuOpen by remember { mutableStateOf(false) }
+                val voices = remember { vm.availableSupertonicVoices() }
+                Box {
+                    Button(
+                        onClick = { voiceMenuOpen = true },
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = MytharaColors.Surface,
+                            contentColor = MytharaColors.Fg,
+                        ),
+                    ) {
+                        Text("voice · ${labelForVoice(state.supertonicVoice)}  ${Glyph.Arrow}")
+                    }
+                    DropdownMenu(
+                        expanded = voiceMenuOpen,
+                        onDismissRequest = { voiceMenuOpen = false },
+                    ) {
+                        voices.forEach { id ->
+                            DropdownMenuItem(
+                                text = {
+                                    Text(
+                                        text = labelForVoice(id) +
+                                            if (id == state.supertonicVoice) "  ${Glyph.Check}" else "",
+                                        color = if (id == state.supertonicVoice)
+                                            MytharaColors.Charple else MytharaColors.Fg,
+                                    )
+                                },
+                                onClick = {
+                                    scope.launch { vm.setSupertonicVoice(id) }
+                                    voiceMenuOpen = false
+                                },
+                            )
+                        }
+                    }
+                }
+            }
+
+            Spacer(Modifier.padding(top = 6.dp))
             Row {
                 when (sState) {
                     com.mythara.mic.supertonic.SupertonicModelStore.State.Installed -> {
@@ -606,6 +651,22 @@ fun SettingsScreen(
 
         Spacer(Modifier.height(40.dp))
     }
+}
+
+/** Human-readable label for a Supertonic voice id. Pure UI; the
+ *  engine + storage layer use the raw id (F1/M1/etc.). */
+private fun labelForVoice(id: String): String = when (id) {
+    "F1" -> "Female 1"
+    "F2" -> "Female 2"
+    "F3" -> "Female 3"
+    "F4" -> "Female 4"
+    "F5" -> "Female 5"
+    "M1" -> "Male 1"
+    "M2" -> "Male 2"
+    "M3" -> "Male 3"
+    "M4" -> "Male 4"
+    "M5" -> "Male 5"
+    else -> id
 }
 
 @Composable

@@ -68,6 +68,10 @@ class SettingsStore @Inject constructor(
     // captioning; users with a Gemini key who prefer higher
     // accuracy can flip this from Settings.
     private val keyPreferCloudVision = booleanPreferencesKey("preferCloudVision")
+    // Supertonic-2 voice name (F1..F5 / M1..M5). The engine loads
+    // the matching <name>.json voice style on every speak() so
+    // changes apply immediately without restarting the app.
+    private val keySupertonicVoice = stringPreferencesKey("supertonicVoice")
 
     private val aead: Aead by lazy {
         AeadConfig.register()
@@ -192,6 +196,13 @@ class SettingsStore @Inject constructor(
         ctx.dataStore.edit { it[keyPreferCloudVision] = value }
     }
 
+    suspend fun setSupertonicVoice(name: String) {
+        val v = name.trim()
+        ctx.dataStore.edit {
+            if (v.isBlank()) it.remove(keySupertonicVoice) else it[keySupertonicVoice] = v
+        }
+    }
+
     suspend fun setRegion(region: Region) {
         ctx.dataStore.edit { it[keyRegion] = region.name }
     }
@@ -212,6 +223,7 @@ class SettingsStore @Inject constructor(
             elevenLabsVoiceId = prefs[keyElevenLabsVoiceId] ?: DEFAULT_ELEVEN_LABS_VOICE_ID,
             useElevenLabs = prefs[keyUseElevenLabs] ?: false,
             preferCloudVision = prefs[keyPreferCloudVision] ?: false,
+            supertonicVoice = prefs[keySupertonicVoice] ?: DEFAULT_SUPERTONIC_VOICE,
         )
     }
 
@@ -237,6 +249,8 @@ class SettingsStore @Inject constructor(
          *  so cloud Gemini runs first (when the key is configured),
          *  with Gemma + MiniMax as fallbacks. */
         val preferCloudVision: Boolean = false,
+        /** Supertonic-2 voice id (F1..F5, M1..M5). Defaults to M1. */
+        val supertonicVoice: String = DEFAULT_SUPERTONIC_VOICE,
     )
 
     companion object {
@@ -270,5 +284,10 @@ class SettingsStore @Inject constructor(
          * via Settings.
          */
         const val DEFAULT_ELEVEN_LABS_VOICE_ID: String = "21m00Tcm4TlvDq8ikWAM"
+
+        /** Default on-device voice id when the user hasn't picked
+         *  one. M1 — male, neutral; matches what the engine
+         *  shipped with before the picker. */
+        const val DEFAULT_SUPERTONIC_VOICE: String = "M1"
     }
 }

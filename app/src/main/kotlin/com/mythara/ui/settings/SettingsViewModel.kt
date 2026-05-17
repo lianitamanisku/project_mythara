@@ -89,6 +89,8 @@ class SettingsViewModel @Inject constructor(
          *  (default; privacy + zero-cost). true = cloud Gemini first
          *  when the key is configured (higher accuracy per call). */
         val preferCloudVision: Boolean = false,
+        /** Currently-selected Supertonic-2 voice (F1..F5, M1..M5). */
+        val supertonicVoice: String = SettingsStore.DEFAULT_SUPERTONIC_VOICE,
     )
 
     data class ValidationResult(val ok: Boolean, val message: String)
@@ -109,6 +111,7 @@ class SettingsViewModel @Inject constructor(
                     elevenLabsVoiceId = snap.elevenLabsVoiceId,
                     useElevenLabs = snap.useElevenLabs,
                     preferCloudVision = snap.preferCloudVision,
+                    supertonicVoice = snap.supertonicVoice,
                 )
             }
             // Pre-fetch the voice library on cold start so the
@@ -251,5 +254,17 @@ class SettingsViewModel @Inject constructor(
     suspend fun setPreferCloudVision(value: Boolean) {
         store.setPreferCloudVision(value)
         _state.update { it.copy(preferCloudVision = value) }
+    }
+
+    /** Returns the catalog of installable Supertonic voices so the
+     *  Settings picker can render the dropdown. Surfaced as a
+     *  ViewModel method rather than direct const access so future
+     *  voice subsets / per-user availability gating slots in here. */
+    fun availableSupertonicVoices(): List<String> =
+        com.mythara.mic.supertonic.SupertonicModelStore.AVAILABLE_VOICES
+
+    suspend fun setSupertonicVoice(name: String) {
+        store.setSupertonicVoice(name)
+        _state.update { it.copy(supertonicVoice = name) }
     }
 }

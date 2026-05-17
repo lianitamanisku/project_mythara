@@ -158,7 +158,8 @@ class Tts @Inject constructor(
                 // we fall through to system TTS so the assistant
                 // still talks.
                 supertonicReady ->
-                    speakViaSupertonic(text)
+                    speakViaSupertonic(text, snap?.supertonicVoice
+                        ?: com.mythara.data.SettingsStore.DEFAULT_SUPERTONIC_VOICE)
 
                 else ->
                     speakViaAndroid(text, locale, userMoodTrend)
@@ -174,19 +175,22 @@ class Tts @Inject constructor(
      * preference. Returns true if synthesis succeeded.
      */
     suspend fun testSupertonic(text: String = "hello, this is Mythara on-device voice."): Boolean {
-        android.util.Log.d(TAG, "testSupertonic: starting (text='${text.take(40)}')")
+        val voice = runCatching { settings.snapshot().supertonicVoice }
+            .getOrDefault(com.mythara.data.SettingsStore.DEFAULT_SUPERTONIC_VOICE)
+        android.util.Log.d(TAG, "testSupertonic: starting (voice=$voice text='${text.take(40)}')")
         if (!supertonic.isReady()) {
             android.util.Log.w(TAG, "testSupertonic: engine not ready")
             return false
         }
         return supertonic.speak(
             text = text,
+            voice = voice,
             onStart = { _speaking.value = true },
             onDone = { _speaking.value = false },
         )
     }
 
-    private suspend fun speakViaSupertonic(text: String) {
+    private suspend fun speakViaSupertonic(text: String, voice: String) {
         // Strip ElevenLabs audio tags ([laugh], [sigh], etc.) — the
         // model includes them when EL is in play but Supertonic
         // would read them literally. Same handling as the Android
@@ -195,6 +199,7 @@ class Tts @Inject constructor(
         if (cleaned.isBlank()) return
         val ok = supertonic.speak(
             text = cleaned,
+            voice = voice,
             onStart = { _speaking.value = true },
             onDone = { _speaking.value = false },
         )

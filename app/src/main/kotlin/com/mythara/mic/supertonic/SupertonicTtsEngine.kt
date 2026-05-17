@@ -78,7 +78,12 @@ class SupertonicTtsEngine @Inject constructor(
     @Volatile private var sessions: Sessions? = null
     @Volatile private var config: TtsConfig? = null
     @Volatile private var indexer: LongArray? = null
+    /** Currently-loaded voice style + the name we loaded it from.
+     *  Swapped on the next speak() when the caller-supplied name
+     *  doesn't match — supports the Settings voice picker without
+     *  needing to re-init the ONNX sessions themselves. */
     @Volatile private var style: VoiceStyle? = null
+    @Volatile private var loadedVoiceName: String? = null
 
     private val initLock = Mutex()
     /** Serialises actual ONNX inference so concurrent speak() calls
@@ -112,6 +117,7 @@ class SupertonicTtsEngine @Inject constructor(
      */
     suspend fun speak(
         text: String,
+        voice: String = DEFAULT_VOICE_NAME,
         lang: String = "en",
         speed: Float = 1.05f,
         totalStep: Int = 8,
@@ -123,11 +129,20 @@ class SupertonicTtsEngine @Inject constructor(
         val s = sessions ?: return false
         val cfg = config ?: return false
         val idx = indexer ?: return false
-        val sty = style ?: return false
+        val e = env ?: return false
 
         return inferenceLock.withLock {
             runCatching {
                 stopInternal()
+                // Lazy-load (or swap) the voice style. Different
+                // voice files are independent JSON blobs in the
+                // model dir — loading one is cheap (~5 ms parse
+                // + tensor alloc) so we just blow away the cached
+                // tensor whenever the name changes.
+                val sty = ensureVoice(voice, e) ?: run {
+                    Log.w(TAG, "voice file for '$voice' missing or invalid")
+                    return@runCatching false
+                }
                 val pcm = synthesizeWaveform(text, lang, s, cfg, idx, sty, speed, totalStep)
                     ?: return@runCatching false
                 schedulePlayback(pcm, cfg.sampleRate, onStart, onDone)
@@ -138,6 +153,33 @@ class SupertonicTtsEngine @Inject constructor(
                 false
             }
         }
+    }
+
+    /** Load the voice JSON if it isn't cached or the requested
+     *  name differs from what's loaded. Returns the cached tensor
+     *  pair, or null if the file is missing / unparseable. */
+    private fun ensureVoice(name: String, e: OrtEnvironment): VoiceStyle? {
+        val cached = style
+        if (cached != null && loadedVoiceName == name) return cached
+        // Close the previous tensors before swapping so we don't
+        // leak native-allocated buffers — each VoiceStyle holds
+        // two OnnxTensors backed by direct ByteBuffers.
+        runCatching { cached?.close() }
+        val file = File(store.modelDir(), "$name.json")
+        if (!file.exists()) {
+            Log.w(TAG, "voice file not found: ${file.absolutePath}")
+            style = null
+            loadedVoiceName = null
+            return null
+        }
+        val loaded = runCatching { parseVoiceStyle(file.readText(), e) }.getOrElse {
+            Log.w(TAG, "voice parse failed for $name: ${it.message}")
+            null
+        }
+        style = loaded
+        loadedVoiceName = if (loaded != null) name else null
+        if (loaded != null) Log.i(TAG, "voice loaded: $name")
+        return loaded
     }
 
     /** Stop any in-flight playback. Safe to call from any thread. */
@@ -165,11 +207,13 @@ class SupertonicTtsEngine @Inject constructor(
         val dir = store.modelDir()
         val cfgFile = File(dir, "tts.json")
         val idxFile = File(dir, "unicode_indexer.json")
-        val styleFile = File(dir, SupertonicModelStore.DEFAULT_VOICE_STYLE)
-        if (!cfgFile.exists() || !idxFile.exists() || !styleFile.exists()) {
-            Log.w(TAG, "missing config / indexer / style file")
+        if (!cfgFile.exists() || !idxFile.exists()) {
+            Log.w(TAG, "missing config / indexer file")
             return@runCatching false
         }
+        // Voice files are loaded lazily on the first speak() call —
+        // see ensureVoice() — so the user can swap voices from
+        // Settings without re-initialising the ONNX sessions.
 
         val e = OrtEnvironment.getEnvironment()
         val opts = OrtSession.SessionOptions()
@@ -181,7 +225,6 @@ class SupertonicTtsEngine @Inject constructor(
         )
         config = parseConfig(cfgFile.readText())
         indexer = parseIndexer(idxFile.readText())
-        style = parseVoiceStyle(styleFile.readText(), e)
         env = e
         sessions = sess
         Log.i(TAG, "Supertonic engine ready · sample_rate=${config!!.sampleRate}")
@@ -570,10 +613,20 @@ class SupertonicTtsEngine @Inject constructor(
         val latentDim: Int,
     )
 
-    private class VoiceStyle(val ttl: OnnxTensor, val dp: OnnxTensor)
+    private class VoiceStyle(val ttl: OnnxTensor, val dp: OnnxTensor) : AutoCloseable {
+        override fun close() {
+            runCatching { ttl.close() }
+            runCatching { dp.close() }
+        }
+    }
 
     companion object {
         private const val TAG = "Mythara/Supertonic"
+        /** Fallback voice when speak() is called without one — keeps
+         *  the engine usable from test paths / older callers. The
+         *  Tts class reads the configured voice from SettingsStore
+         *  and passes it explicitly in production. */
+        const val DEFAULT_VOICE_NAME = "M1"
         private val json = Json { ignoreUnknownKeys = true; isLenient = true }
     }
 }

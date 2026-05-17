@@ -185,19 +185,32 @@ class SupertonicModelStore @Inject constructor(
         private val BASE_URL =
             "https://huggingface.co/Supertone/supertonic-2/resolve/main"
 
-        /** Default voice style — male, neutral. The user can swap to
-         *  F1/M2/etc. later by adding more downloads, but a single
-         *  style is enough to start synthesising. */
+        /** Default voice when the user hasn't picked one. M1 — male,
+         *  neutral. */
         const val DEFAULT_VOICE_STYLE = "M1.json"
 
-        private val FILES = listOf(
-            "text_encoder.onnx" to "$BASE_URL/onnx/text_encoder.onnx",
-            "duration_predictor.onnx" to "$BASE_URL/onnx/duration_predictor.onnx",
-            "vector_estimator.onnx" to "$BASE_URL/onnx/vector_estimator.onnx",
-            "vocoder.onnx" to "$BASE_URL/onnx/vocoder.onnx",
-            "tts.json" to "$BASE_URL/onnx/tts.json",
-            "unicode_indexer.json" to "$BASE_URL/onnx/unicode_indexer.json",
-            DEFAULT_VOICE_STYLE to "$BASE_URL/voice_styles/$DEFAULT_VOICE_STYLE",
+        /** All voice styles published in the official
+         *  `Supertone/supertonic-2` repo. Five male, five female,
+         *  each ~420 KB. Total extra footprint over a single voice
+         *  is ~3.8 MB — negligible relative to the 268 MB model
+         *  bundle, so we pull them all at install time and let the
+         *  user pick freely from Settings without a per-voice
+         *  download wait. */
+        val AVAILABLE_VOICES: List<String> = listOf(
+            "F1", "F2", "F3", "F4", "F5",
+            "M1", "M2", "M3", "M4", "M5",
         )
+
+        private val FILES: List<Pair<String, String>> = buildList {
+            add("text_encoder.onnx" to "$BASE_URL/onnx/text_encoder.onnx")
+            add("duration_predictor.onnx" to "$BASE_URL/onnx/duration_predictor.onnx")
+            add("vector_estimator.onnx" to "$BASE_URL/onnx/vector_estimator.onnx")
+            add("vocoder.onnx" to "$BASE_URL/onnx/vocoder.onnx")
+            add("tts.json" to "$BASE_URL/onnx/tts.json")
+            add("unicode_indexer.json" to "$BASE_URL/onnx/unicode_indexer.json")
+            for (v in AVAILABLE_VOICES) {
+                add("$v.json" to "$BASE_URL/voice_styles/$v.json")
+            }
+        }
     }
 }
