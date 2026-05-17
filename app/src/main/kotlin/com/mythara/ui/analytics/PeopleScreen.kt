@@ -526,32 +526,27 @@ fun PeopleScreen(
     var assignTarget by remember { mutableStateOf<com.mythara.face.UnknownFaceRow?>(null) }
     val ctx = LocalContext.current
 
+    // Phase B — MytharaScaffold provides the header (◆ people +
+    // ← back). When viewing a contact detail, the system back
+    // gesture deselects first instead of popping the screen.
+    androidx.activity.compose.BackHandler(enabled = selected != null) {
+        selectedKey = null
+    }
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .background(MytharaColors.Bg)
             .padding(WindowInsets.systemBars.asPaddingValues())
-            .padding(horizontal = 16.dp, vertical = 12.dp),
+            .padding(horizontal = 16.dp, vertical = 4.dp),
     ) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            TextButton(onClick = {
-                if (selected != null) selectedKey = null else onBack()
-            }) {
-                Text("${Glyph.LeftArrow} back", color = MytharaColors.FgMute)
-            }
-            Spacer(Modifier.width(8.dp))
-            Text(
-                text = "${Glyph.DiamondFilled} people",
-                color = MytharaColors.Charple,
-                style = MaterialTheme.typography.titleMedium,
-            )
-            // Refresh lives in the header so it stays visible no matter
-            // how long the contact list grows.
-            if (selected == null) {
-                Spacer(Modifier.weight(1f))
+        // Refresh lives at the top of the body so it stays visible
+        // no matter how long the contact list grows. Only shown
+        // on the list view; the detail view doesn't need it.
+        if (selected == null) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.End,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
                 Button(
                     onClick = { vm.rebuild(force = false) },
                     enabled = !refreshing,
@@ -567,8 +562,19 @@ fun PeopleScreen(
                     )
                 }
             }
+            Spacer(Modifier.height(8.dp))
+        } else {
+            // A tiny "← back to list" chip in the detail view so
+            // users without gesture-nav have a visible affordance.
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                TextButton(onClick = { selectedKey = null }) {
+                    Text("${Glyph.LeftArrow} back to list", color = MytharaColors.FgMute)
+                }
+            }
         }
-        Spacer(Modifier.height(12.dp))
 
         if (selected != null) {
             // Refresh the per-contact live-persona snapshot whenever

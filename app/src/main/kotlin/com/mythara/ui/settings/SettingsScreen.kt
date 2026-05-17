@@ -70,27 +70,17 @@ fun SettingsScreen(
     val state by vm.state.collectAsState()
     val scope = rememberCoroutineScope()
 
+    // Phase B — MytharaScaffold provides the header (← back / ◆
+    // settings) + brand background. This Column owns the content
+    // body only. systemBars insets stay so deep scrollback isn't
+    // hidden under the gesture-nav home pill.
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .background(MytharaColors.Bg)
             .padding(WindowInsets.systemBars.asPaddingValues())
             .verticalScroll(rememberScrollState())
-            .padding(horizontal = 16.dp, vertical = 12.dp),
+            .padding(horizontal = 16.dp, vertical = 4.dp),
     ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            TextButton(onClick = onBack) {
-                Text("${Glyph.LeftArrow} back", color = MytharaColors.FgMute)
-            }
-            Spacer(Modifier.height(1.dp))
-            Text(
-                text = "${Glyph.DiamondFilled} settings",
-                color = MytharaColors.Charple,
-                style = MaterialTheme.typography.titleMedium,
-            )
-        }
-
-        Spacer(Modifier.height(20.dp))
         AutopilotPanel()
 
         Spacer(Modifier.height(16.dp))

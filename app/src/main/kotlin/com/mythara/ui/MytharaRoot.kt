@@ -269,14 +269,27 @@ fun MytharaRoot(
                     if (isCompact) {
                         NavHost(navController = nav, startDestination = Routes.Chat) {
                             composable(Routes.Chat) {
-                                ChatScreen(
-                                    onOpenSettings = { nav.navigate(Routes.Settings) },
-                                    onOpenPeople = { nav.navigate(Routes.People) },
-                                    onOpenFace = { nav.navigate(Routes.Face) },
-                                    onOpenAboutMe = { nav.navigate(Routes.AboutMe) },
-                                    onOpenInsights = { nav.navigate(Routes.Insights) },
-                                    onOpenMusicVocab = { nav.navigate(Routes.MusicVocab) },
-                                )
+                                // Phase B — Chat adopts MytharaScaffold
+                                // as a pure architectural wrap. No title
+                                // sliver (Chat is the home + has its
+                                // own composer at the bottom), no edge-
+                                // glow (composer occupies the bottom
+                                // band). Just the brand bg + future
+                                // chrome hooks.
+                                com.mythara.ui.scaffold.MytharaScaffold(
+                                    title = null,
+                                    glyph = null,
+                                    edgeGlow = null,
+                                ) {
+                                    ChatScreen(
+                                        onOpenSettings = { nav.navigate(Routes.Settings) },
+                                        onOpenPeople = { nav.navigate(Routes.People) },
+                                        onOpenFace = { nav.navigate(Routes.Face) },
+                                        onOpenAboutMe = { nav.navigate(Routes.AboutMe) },
+                                        onOpenInsights = { nav.navigate(Routes.Insights) },
+                                        onOpenMusicVocab = { nav.navigate(Routes.MusicVocab) },
+                                    )
+                                }
                             }
                             composable(Routes.MusicVocab) {
                                 com.mythara.ui.music.MusicVocabularyScreen(
@@ -293,17 +306,29 @@ fun MytharaRoot(
                                 InsightsScreen(onBack = { nav.popBackStack() })
                             }
                             composable(Routes.Settings) {
-                                SettingsScreen(
+                                com.mythara.ui.scaffold.MytharaScaffold(
+                                    title = "settings",
+                                    glyph = com.mythara.ui.theme.Glyph.DiamondFilled,
                                     onBack = { nav.popBackStack() },
-                                    onOpenAbout = { nav.navigate(Routes.About) },
-                                    onOpenPeople = { nav.navigate(Routes.People) },
-                                    onOpenAudit = { nav.navigate(Routes.Audit) },
-                                )
+                                ) {
+                                    SettingsScreen(
+                                        onBack = { nav.popBackStack() },
+                                        onOpenAbout = { nav.navigate(Routes.About) },
+                                        onOpenPeople = { nav.navigate(Routes.People) },
+                                        onOpenAudit = { nav.navigate(Routes.Audit) },
+                                    )
+                                }
                             }
                             composable(Routes.People) {
-                                com.mythara.ui.analytics.PeopleScreen(
+                                com.mythara.ui.scaffold.MytharaScaffold(
+                                    title = "people",
+                                    glyph = com.mythara.ui.theme.Glyph.DiamondFilled,
                                     onBack = { nav.popBackStack() },
-                                )
+                                ) {
+                                    com.mythara.ui.analytics.PeopleScreen(
+                                        onBack = { nav.popBackStack() },
+                                    )
+                                }
                             }
                             composable(Routes.About) {
                                 AboutScreen(

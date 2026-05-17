@@ -826,17 +826,23 @@ private fun TextBubble(
         null
     }
 
+    // Phase B polish — sender glyph differentiates user (◆ filled)
+    // from the agent (◇ outline), so the reader can scan a long
+    // scrollback at a glance. Notification still uses ◆ in Mustard
+    // since it's a system signal, not the agent. Corner radius
+    // bumped from 10 → 12 to match the brand minimal language.
+    val senderGlyph = if (isUser) Glyph.DiamondFilled else Glyph.DiamondOutline
     Column(modifier = Modifier.fillMaxWidth(), horizontalAlignment = align) {
         Text(
-            text = "${Glyph.DiamondFilled} $label",
+            text = "$senderGlyph $label",
             style = MaterialTheme.typography.labelMedium.copy(color = accent),
             modifier = Modifier.padding(bottom = 2.dp),
         )
         Box(
             modifier = Modifier
-                .clip(RoundedCornerShape(10.dp))
+                .clip(RoundedCornerShape(12.dp))
                 .background(bg)
-                .border(1.dp, border, RoundedCornerShape(10.dp))
+                .border(1.dp, border, RoundedCornerShape(12.dp))
                 .padding(horizontal = 12.dp, vertical = 8.dp),
         ) {
             Column(modifier = Modifier.fillMaxWidth()) {
