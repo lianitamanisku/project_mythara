@@ -8,6 +8,7 @@ import android.net.Uri
 import android.provider.CalendarContract
 import android.util.Log
 import androidx.core.content.ContextCompat
+import com.mythara.memory.DevicePresenceCache
 import dagger.hilt.android.qualifiers.ApplicationContext
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -45,6 +46,7 @@ import javax.inject.Singleton
 @Singleton
 class EnvironmentContext @Inject constructor(
     @ApplicationContext private val ctx: Context,
+    private val presenceCache: DevicePresenceCache,
 ) {
 
     /** A one-shot read of the user's surrounding context at the
@@ -145,19 +147,25 @@ class EnvironmentContext @Inject constructor(
     }
 
     /** Best-effort "what other Mythara-friendly devices are within
-     *  arm's reach right now". Pulls from the wear-sync workers'
-     *  in-process state cache — we only report a device that's
-     *  reported a recent heartbeat (within the last 5 minutes).
+     *  arm's reach right now". Reads from [DevicePresenceCache],
+     *  which is refreshed by [com.mythara.memory.HeartbeatSyncer]
+     *  on the same 5-minute cadence the heartbeat write loop uses
+     *  — so the directory listing and our cached view track each
+     *  other within one tick. Synchronous + cheap: a single map
+     *  scan over peer presence entries, no IO.
      *
-     *  For now this returns an empty list — Phase G ships the
-     *  facet shape so future wear-presence + BLE collectors can
-     *  populate it without modifying the vault writer. */
+     *  A peer counts as "nearby" only if its last heartbeat write
+     *  to the shared repo landed inside the default 5-min window
+     *  ([DevicePresenceCache.DEFAULT_NEARBY_WINDOW_MS]). Devices
+     *  outside the window are still in the cache but are filtered
+     *  out — they're registered, not necessarily online.
+     *
+     *  TODO(env): once a BLE scanner / Wear data-layer presence
+     *  source exists, union its results in here so devices that
+     *  are physically nearby but offline-from-GitHub still surface
+     *  as `proximity:<label>`. */
     private fun nearbyDeviceLabels(): List<String> {
-        // TODO(env): wire to WatchDevicePresence + BLE scanner
-        //  caches. Returning empty now so the facet hook is in
-        //  place; populating it is a follow-up that doesn't need
-        //  any changes to ObserveSession or the vault writer.
-        return emptyList()
+        return runCatching { presenceCache.nearbyLabels() }.getOrDefault(emptyList())
     }
 
     companion object {

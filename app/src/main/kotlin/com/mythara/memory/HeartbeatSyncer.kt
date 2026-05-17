@@ -38,6 +38,7 @@ class HeartbeatSyncer @Inject constructor(
     private val scheduler: MemorySyncScheduler,
     private val memorySettings: MemorySettings,
     private val taskExecutor: TaskExecutor,
+    private val presenceCache: DevicePresenceCache,
 ) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     @Volatile private var loop: Job? = null
@@ -66,7 +67,7 @@ class HeartbeatSyncer @Inject constructor(
             Log.v(TAG, "heartbeat: sync disabled/unconfigured — skipping")
             return
         }
-        Log.d(TAG, "heartbeat: firing sync + task tick")
+        Log.d(TAG, "heartbeat: firing sync + task tick + presence refresh")
         // 1) Sync: ships pending tasks + heartbeat presence, pulls
         //    remote task state.
         scheduler.fireNow(force = false)
@@ -75,6 +76,12 @@ class HeartbeatSyncer @Inject constructor(
         //    so a backlog of tasks can't wedge the heartbeat.
         runCatching { taskExecutor.tick(maxTasks = 3) }
             .onFailure { Log.w(TAG, "task tick failed: ${it.message}") }
+        // 3) Presence refresh: pull the canonical device_messages/devices
+        //    directory into the in-memory cache so EnvironmentContext can
+        //    emit `proximity:<device>` facets synchronously per utterance
+        //    without hitting GitHub each time.
+        runCatching { presenceCache.refreshFromHeartbeats() }
+            .onFailure { Log.v(TAG, "presence refresh failed: ${it.message}") }
     }
 
     /** Single-shot manual kick — used by the "sync now" button + the
