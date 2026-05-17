@@ -63,6 +63,13 @@ class SupertonicModelStore @Inject constructor(
     private val http = OkHttpClient.Builder()
         .connectTimeout(20, TimeUnit.SECONDS)
         .readTimeout(5, TimeUnit.MINUTES)
+        // HF resolves `/resolve/main/<path>` with a 302 / 307 to the
+        // CAS-bridge CDN (cas-bridge.xethub.hf.co). Both follow flags
+        // are on by default in OkHttp, but make the intent explicit
+        // — the cross-protocol case especially can be a silent
+        // failure if a future config disables it.
+        .followRedirects(true)
+        .followSslRedirects(true)
         .build()
 
     fun isInstalled(): Boolean = allFilesPresent()
@@ -84,6 +91,15 @@ class SupertonicModelStore @Inject constructor(
         if (allFilesPresent()) {
             _state.value = State.Installed
             return@withContext true
+        }
+        // If the previous attempt failed (or this is a retry after a
+        // URL fix that changes which repo we pull from), wipe any
+        // partially-downloaded files first. Otherwise a leftover
+        // text_encoder.onnx from the wrong repo would skip the
+        // download check ("exists, size > 0") and we'd end up with
+        // an incompatible model file mixed in with fresh ones.
+        if (_state.value == State.Failed) {
+            modelDir().listFiles()?.forEach { runCatching { it.delete() } }
         }
         _state.value = State.Downloading
         _progress.value = 0f
@@ -152,13 +168,22 @@ class SupertonicModelStore @Inject constructor(
 
         /**
          * File set + download URLs. Pulled from the
-         * `onnx-community/Supertonic-TTS-2-ONNX` repo on Hugging Face
-         * via the `resolve/main/<path>?download=true` URL form, which
-         * returns the actual file (not an HTML page) and respects
-         * LFS redirection automatically.
+         * **official** `Supertone/supertonic-2` repo on Hugging Face
+         * (the canonical one the Java reference targets), not the
+         * `onnx-community/...` transformers.js port — that port uses
+         * a different file layout (3 ONNX bundles with sidecar
+         * `.onnx_data` weight files, binary voice files, tokenizer.json
+         * instead of unicode_indexer.json + tts.json), which would
+         * require a different inference pipeline than the one in
+         * [SupertonicTtsEngine].
+         *
+         * URL form `resolve/main/<path>` returns the actual file
+         * (302/307 → CDN → bytes) — no `?download=true` query needed
+         * here since these aren't LFS-pointer-blob files on the HF
+         * side; they redirect straight to the binary.
          */
         private val BASE_URL =
-            "https://huggingface.co/onnx-community/Supertonic-TTS-2-ONNX/resolve/main"
+            "https://huggingface.co/Supertone/supertonic-2/resolve/main"
 
         /** Default voice style — male, neutral. The user can swap to
          *  F1/M2/etc. later by adding more downloads, but a single
@@ -166,13 +191,13 @@ class SupertonicModelStore @Inject constructor(
         const val DEFAULT_VOICE_STYLE = "M1.json"
 
         private val FILES = listOf(
-            "text_encoder.onnx" to "$BASE_URL/onnx/text_encoder.onnx?download=true",
-            "duration_predictor.onnx" to "$BASE_URL/onnx/duration_predictor.onnx?download=true",
-            "vector_estimator.onnx" to "$BASE_URL/onnx/vector_estimator.onnx?download=true",
-            "vocoder.onnx" to "$BASE_URL/onnx/vocoder.onnx?download=true",
-            "tts.json" to "$BASE_URL/tts.json?download=true",
-            "unicode_indexer.json" to "$BASE_URL/unicode_indexer.json?download=true",
-            DEFAULT_VOICE_STYLE to "$BASE_URL/voice_styles/$DEFAULT_VOICE_STYLE?download=true",
+            "text_encoder.onnx" to "$BASE_URL/onnx/text_encoder.onnx",
+            "duration_predictor.onnx" to "$BASE_URL/onnx/duration_predictor.onnx",
+            "vector_estimator.onnx" to "$BASE_URL/onnx/vector_estimator.onnx",
+            "vocoder.onnx" to "$BASE_URL/onnx/vocoder.onnx",
+            "tts.json" to "$BASE_URL/onnx/tts.json",
+            "unicode_indexer.json" to "$BASE_URL/onnx/unicode_indexer.json",
+            DEFAULT_VOICE_STYLE to "$BASE_URL/voice_styles/$DEFAULT_VOICE_STYLE",
         )
     }
 }
