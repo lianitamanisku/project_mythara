@@ -38,6 +38,32 @@
     <Metadata key="CLOCK_TYPE" value="DIGITAL" />
     <Metadata key="PREVIEW_TIME" value="10:08:32" />
 
+    <!-- Dot-matrix bitmap font for the AOD — 5×7 cell glyphs, 30×42
+         per character. Same font + assets the Tactical face uses for
+         its AOD line. Covers digits, colon, plus the letters needed
+         for "MYTHARA". -->
+    <BitmapFonts>
+        <BitmapFont name="dotmatrix">
+            <Character name="0" resource="dm_0" width="30" height="42" />
+            <Character name="1" resource="dm_1" width="30" height="42" />
+            <Character name="2" resource="dm_2" width="30" height="42" />
+            <Character name="3" resource="dm_3" width="30" height="42" />
+            <Character name="4" resource="dm_4" width="30" height="42" />
+            <Character name="5" resource="dm_5" width="30" height="42" />
+            <Character name="6" resource="dm_6" width="30" height="42" />
+            <Character name="7" resource="dm_7" width="30" height="42" />
+            <Character name="8" resource="dm_8" width="30" height="42" />
+            <Character name="9" resource="dm_9" width="30" height="42" />
+            <Character name=":" resource="dm_colon" width="30" height="42" />
+            <Character name="M" resource="dm_m" width="30" height="42" />
+            <Character name="Y" resource="dm_y" width="30" height="42" />
+            <Character name="T" resource="dm_t" width="30" height="42" />
+            <Character name="H" resource="dm_h" width="30" height="42" />
+            <Character name="A" resource="dm_a" width="30" height="42" />
+            <Character name="R" resource="dm_r" width="30" height="42" />
+        </BitmapFont>
+    </BitmapFonts>
+
     <Scene backgroundColor="#ff000000">
 
         <!-- ============ INTERACTIVE ============ -->
@@ -58,16 +84,23 @@
                 <Image resource="warrior_silhouette" />
             </PartImage>
 
-            <!-- Minute / hour ticks around the perimeter. Same lavender
-                 purple as the time digits + wordmark letters, with a
-                 Gaussian-blur glow baked underneath each tick for the
-                 "neon" look. 60 minute ticks (length 6 px) with longer
-                 ticks at the 12 hour positions (length 14 px). Sits at
-                 the canvas edge, well outside the rose / time / wordmark
-                 zones so it never visually competes. Hidden in ambient
-                 for OLED-burn-in / battery (AOD is bare time only). -->
+            <!-- Tick ring — the design intent is a battery gauge
+                 (purple = remaining, grey = consumed, with the grey
+                 boundary marching anti-clockwise as battery drops).
+                 Implementation has the 11 pre-baked battery-level
+                 ring variants (tick_marks_b0..tick_marks_b100) ready
+                 to go, but WFF v2's [BATTERY.LEVEL] / [BATTERY.PERCENTAGE]
+                 system expressions don't appear to be exposed to the
+                 watch-face renderer — tactical face only ever reads
+                 battery via complications, and our Conditions all
+                 evaluated to the 0% bucket (all-grey).
+                 Falling back to the always-full purple ring for now;
+                 to wire battery later we'd need either a docs-confirmed
+                 expression name or a numeric complication (RANGED_VALUE
+                 tied to WATCH_BATTERY) plus an [COMPLICATION] sub-
+                 expression to read its value. -->
             <PartImage x="0" y="0" width="450" height="450">
-                <Image resource="tick_marks" />
+                <Image resource="tick_marks_b100" />
             </PartImage>
 
             <!-- 12 o'clock marker — inverted triangle in the same
@@ -244,22 +277,64 @@
         </Group>
 
         <!-- ============ AMBIENT (AOD) ============ -->
+        <!-- MYTHARA wordmark + rose + time + day/date — all minimal
+             elements for OLED-burn-in / battery. Dot-matrix bitmap
+             font uses the SAME size as the tactical face (30) for the
+             time + wordmark — sizes 20 / 38 in the previous attempt
+             broke the WFF parser. -->
         <Group x="0" y="0" width="450" height="450" name="ambient" alpha="0">
             <Variant mode="AMBIENT" target="alpha" value="255" />
 
-            <!-- Tiny rose outline above the time. -->
-            <PartImage x="200" y="145" width="50" height="50">
+            <!-- MYTHARA wordmark — dot-matrix, dim purple. Size 30
+                 matches the bitmap font's character cell (proven
+                 in the tactical face's AOD). -->
+            <PartText x="0" y="80" width="450" height="42">
+                <Text align="CENTER">
+                    <BitmapFont family="dotmatrix" size="30" color="#ff8a6fff"><![CDATA[MYTHARA]]></BitmapFont>
+                </Text>
+            </PartText>
+
+            <!-- Rose — small, centred just below the wordmark. -->
+            <PartImage x="195" y="138" width="60" height="60">
                 <Image resource="rose" />
             </PartImage>
 
-            <!-- Time HH:MM — charple, smaller. -->
-            <DigitalClock x="0" y="210" width="450" height="80">
+            <!-- Time HH:MM — dot-matrix purple, size 30 (matches
+                 cell size). -->
+            <DigitalClock x="0" y="218" width="450" height="58">
                 <TimeText format="hh:mm" hourFormat="24" align="CENTER"
-                    x="0" y="0" width="450" height="80">
-                    <Font family="jetbrains_mono_regular" size="48"
-                        weight="NORMAL" slant="NORMAL" color="#ff8a6fff" />
+                    x="0" y="0" width="450" height="58">
+                    <BitmapFont family="dotmatrix" size="30" color="#ff8a6fff" />
                 </TimeText>
             </DigitalClock>
+
+            <!-- Day | Date row — small text under the time. Uses
+                 jetbrains_mono_regular because dot-matrix font lacks
+                 the full alphabet for day names + month abbreviations.
+                 Same lavender purple as the wordmark for visual
+                 cohesion. -->
+            <PartText x="100" y="290" width="120" height="22">
+                <Text align="END">
+                    <Font family="jetbrains_mono_regular" size="14"
+                        weight="BOLD" slant="NORMAL" color="#ff8a6fff">
+                        <Template><![CDATA[%s]]><Parameter expression="[DAY_OF_WEEK_S]" /></Template>
+                    </Font>
+                </Text>
+            </PartText>
+            <PartText x="215" y="290" width="20" height="22">
+                <Text align="CENTER">
+                    <Font family="jetbrains_mono_regular" size="14"
+                        weight="BOLD" slant="NORMAL" color="#ff8a6fff"><![CDATA[|]]></Font>
+                </Text>
+            </PartText>
+            <PartText x="230" y="290" width="120" height="22">
+                <Text align="START">
+                    <Font family="jetbrains_mono_regular" size="14"
+                        weight="BOLD" slant="NORMAL" color="#ff8a6fff">
+                        <Template><![CDATA[%s %d]]><Parameter expression="[MONTH_S]" /><Parameter expression="[DAY]" /></Template>
+                    </Font>
+                </Text>
+            </PartText>
         </Group>
     </Scene>
 </WatchFace>
