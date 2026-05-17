@@ -18,8 +18,10 @@ import java.net.HttpURLConnection
 import java.net.URL
 import kotlin.coroutines.resume
 
-/** Current-conditions readout for the PTT screen. */
-data class WeatherInfo(val tempC: Int, val label: String)
+/** Current-conditions readout for the PTT screen. Temperature is in
+ *  degrees Fahrenheit (converted at source from Open-Meteo's Celsius
+ *  payload) so every display site can just slap "°F" on it. */
+data class WeatherInfo(val tempF: Int, val label: String)
 
 sealed interface WeatherResult {
     data class Ok(val info: WeatherInfo) : WeatherResult
@@ -102,9 +104,10 @@ private fun fetchOpenMeteo(lat: Double, lon: Double): WeatherInfo {
     try {
         val body = conn.inputStream.bufferedReader().use { it.readText() }
         val current = JSONObject(body).getJSONObject("current")
-        val temp = current.getDouble("temperature_2m")
+        val tempC = current.getDouble("temperature_2m")
+        val tempF = tempC * 9.0 / 5.0 + 32.0
         val code = current.getInt("weather_code")
-        return WeatherInfo(tempC = Math.round(temp).toInt(), label = wmoLabel(code))
+        return WeatherInfo(tempF = Math.round(tempF).toInt(), label = wmoLabel(code))
     } finally {
         conn.disconnect()
     }

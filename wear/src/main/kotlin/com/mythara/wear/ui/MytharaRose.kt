@@ -79,7 +79,16 @@ private fun DrawScope.drawRose(
     val side = min(size.width, size.height)
     val cx = size.width / 2f
     val cy = size.height / 2f
-    val scale = 6.5f * (side / 240f)
+    // The rose's source geometry puts the big-petal tip at y=-30 source
+    // units, so the rose's visual radius is 30 source units. Scale to
+    // fit comfortably inside the canvas with breathing room for the
+    // optional listening ring (which sits at side*0.46 from centre).
+    // Previously this was `6.5 * (side/240)` — sized for the wallpaper's
+    // tall canvas, which made the rose overflow ~95% past the watch's
+    // 120dp Canvas bounds and visually drift around / out of view.
+    val rosePadFrac = if (showRing) 0.62f else 0.80f
+    val targetRadius = (side / 2f) * rosePadFrac
+    val scale = targetRadius / 30f
 
     // Optional growing ring around the rose while listening — visual
     // affordance for the "I'm capturing right now" state. Same charple

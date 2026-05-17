@@ -641,7 +641,7 @@ class AboutMeViewModel @Inject constructor(
         val parts = buildList {
             (o["battery"] as? JsonObject)?.let { b ->
                 b.num("percent")?.let { add("Battery ${it.toInt()}%") }
-                b.num("temperature_c")?.let { add("${"%.0f".format(it)}°C") }
+                b.num("temperature_c")?.let { add("${"%.0f".format(it * 9.0 / 5.0 + 32.0)}°F") }
             }
             (o["environment"] as? JsonObject)?.let { e ->
                 e.num("light_lux")?.let { add("Light ${it.toInt()} lux") }

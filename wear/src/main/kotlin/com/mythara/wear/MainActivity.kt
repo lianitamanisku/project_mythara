@@ -988,7 +988,7 @@ internal fun sendBytesToPhone(ctx: android.content.Context, path: String, bytes:
  */
 private suspend fun loadWeather(ctx: android.content.Context): String =
     when (val r = fetchWeather(ctx)) {
-        is WeatherResult.Ok -> "${r.info.tempC}°C · ${r.info.label}"
+        is WeatherResult.Ok -> "${r.info.tempF}°F · ${r.info.label}"
         WeatherResult.NoPermission -> "location off"
         WeatherResult.NoLocation -> "no location"
         is WeatherResult.Error -> "weather n/a"

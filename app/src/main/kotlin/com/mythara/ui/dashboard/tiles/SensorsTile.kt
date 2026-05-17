@@ -95,7 +95,7 @@ fun SensorsTile(onExpand: () -> Unit) {
     ) {
         Column(modifier = Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
             metric("battery", s.batteryPct?.let { "$it%" } ?: "—")
-            metric("temp", s.batteryTempC?.let { "%.1f°C".format(it) } ?: "—")
+            metric("temp", s.batteryTempC?.let { "%.1f°F".format(it * 9.0 / 5.0 + 32.0) } ?: "—")
             metric("light", s.lightLux?.let { "${it.toInt()} lux" } ?: "—")
             metric("net", s.connectivity ?: "—")
             metric("free", s.storagePct?.let { "$it%" } ?: "—")
