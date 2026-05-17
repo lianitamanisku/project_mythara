@@ -136,17 +136,28 @@ class FaceAnalysisWorker @AssistedInject constructor(
             if (top.distance <= ContactFaceMatcher.STRICT_THRESHOLD) {
                 maybeSetContactAvatar(top.nameKey, bmp, face.box)
             }
-            // Always log a physical-meet interaction.
+            // Always log a physical-meet interaction. Source is the
+            // actual device the photo came from (was hardcoded to
+            // "glasses" when this path was glasses-only — now phone
+            // photos route through here too, so we read from the
+            // lifeline row's provenance column instead). When a
+            // place label or GPS fix is on the photo we promote it
+            // into the note field so the interactions panel shows
+            // "met at <place>" rather than just the bare device
+            // name, since the location is what the user actually
+            // cares about reading later.
+            val photoSource = row.sourceDeviceType?.takeIf { it.isNotBlank() } ?: "phone"
+            val placeNote = buildPlaceNote(row.placeLabel, row.lat, row.lng)
             interactionRepo.dao.insert(
                 ContactInteractionRow(
                     nameKey = top.nameKey,
                     tsMs = row.takenMs,
                     kind = "physical_meet",
-                    source = "glasses",
+                    source = photoSource,
                     lat = row.lat,
                     lng = row.lng,
                     placeLabel = row.placeLabel,
-                    note = null,
+                    note = placeNote,
                     refLifelineId = lifelineId,
                     refAuditId = null,
                 ),
@@ -256,6 +267,21 @@ class FaceAnalysisWorker @AssistedInject constructor(
             if (w <= 0 || h <= 0) return@runCatching null
             Bitmap.createBitmap(source, left, top, w, h)
         }.getOrNull()
+    }
+
+    /** Compose a short, human-readable place description for the
+     *  interaction note. Prefers a geocoded label when present
+     *  ("Whole Foods near home"); falls back to a 4-decimal lat/lng
+     *  pair which is roughly street-block precision and still
+     *  recognisable to the user reading their history. Returns null
+     *  when the photo had no location info at all. */
+    private fun buildPlaceNote(placeLabel: String?, lat: Double?, lng: Double?): String? {
+        val label = placeLabel?.takeIf { it.isNotBlank() }
+        if (label != null) return "met at $label"
+        if (lat != null && lng != null) {
+            return "met at ${"%.4f".format(lat)}, ${"%.4f".format(lng)}"
+        }
+        return null
     }
 
     private fun parseFirstThree(json: String?): List<String> = runCatching {

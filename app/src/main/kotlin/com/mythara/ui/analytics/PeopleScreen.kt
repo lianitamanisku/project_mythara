@@ -1262,7 +1262,13 @@ private fun InteractionRow(row: com.mythara.analytics.interactions.ContactIntera
         "physical_meet" -> "met in person"
         else -> row.kind
     }
-    val srcSuffix = when (row.source) {
+    // Source suffix: only show for non-physical interactions. For a
+    // physical meeting, the user cares about WHERE it happened, not
+    // which device captured the photo — the location line below
+    // carries the meaningful detail. Hardcoding "via glasses" here
+    // was misleading once phone-camera photos started routing
+    // through the same face-analysis worker.
+    val srcSuffix = if (row.kind == "physical_meet") "" else when (row.source) {
         "glasses" -> " · via glasses"
         "notification" -> ""
         "agent_action" -> " · agent"
@@ -1284,9 +1290,19 @@ private fun InteractionRow(row: com.mythara.analytics.interactions.ContactIntera
             style = MaterialTheme.typography.labelSmall,
         )
     }
-    if (!row.placeLabel.isNullOrBlank()) {
+    // Location line — prefer a geocoded label ("Whole Foods near
+    // home"), fall back to the note field the face worker
+    // composed ("met at <place>" / "met at 37.7749, -122.4194"),
+    // then bare coords. Renders nothing when the photo had no
+    // location info at all.
+    val locText = row.placeLabel?.takeIf { it.isNotBlank() }
+        ?: row.note?.takeIf { it.isNotBlank() }
+        ?: (if (row.lat != null && row.lng != null) {
+            "${"%.4f".format(row.lat)}, ${"%.4f".format(row.lng)}"
+        } else null)
+    if (locText != null) {
         Text(
-            "${Glyph.AccentBar} ${row.placeLabel}",
+            "${Glyph.AccentBar} $locText",
             color = MytharaColors.FgDim,
             style = MaterialTheme.typography.labelSmall,
         )
