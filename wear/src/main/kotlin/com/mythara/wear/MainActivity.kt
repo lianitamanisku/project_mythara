@@ -70,7 +70,9 @@ import com.google.android.gms.wearable.Wearable
 import com.mythara.wear.resonance.ResonancePad
 import com.mythara.wear.resonance.ResonanceStore
 import com.mythara.wear.ui.ConstellationOverlay
+import com.mythara.wear.ui.EcgLine
 import com.mythara.wear.ui.MytharaRose
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.ui.input.pointer.pointerInput
 import kotlinx.coroutines.launch
@@ -579,19 +581,24 @@ private fun HomeScreen(
                     )
                 }
 
-                // Top overlay: tiny clock + HR badge. Aligned to top-
-                // centre of the parent Box — doesn't affect the rose's
-                // centre alignment.
+                // Top overlay: tiny clock + live ECG strip. Aligned to
+                // top-centre of the parent Box — doesn't affect the
+                // rose's centre alignment. The ECG is a scrolling QRS
+                // waveform driven by the actual BPM (60_000 / bpm ms
+                // per beat); falls back to a dim flat line when no
+                // fresh reading is available so the layout doesn't
+                // jump as samples come and go.
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
                     modifier = Modifier.align(Alignment.TopCenter),
                 ) {
                     Text(clockLabel, color = DIM, fontSize = 11.sp)
                     Spacer(Modifier.size(10.dp))
-                    Text(
-                        text = "♥ ${hrBpm?.toString() ?: "--"}",
-                        color = Color(0xFFEB4268),
-                        fontSize = 11.sp,
+                    EcgLine(
+                        bpm = hrBpm,
+                        modifier = Modifier
+                            .width(46.dp)
+                            .height(14.dp),
                     )
                 }
 
