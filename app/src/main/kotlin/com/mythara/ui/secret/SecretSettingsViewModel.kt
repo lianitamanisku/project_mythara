@@ -110,6 +110,20 @@ class SecretSettingsViewModel @Inject constructor(
         /** Count of `topic:resonance` HR rows visible in the latest
          *  vault page — proof that flushes are landing in the vault. */
         val resonanceHrRowCount: Int = 0,
+        // ── Phase G — Observe live-UI surfaces ─────────────────
+        /** Latest partial transcript emitted by Vosk while the
+         *  user is mid-utterance. Empty when no session is
+         *  active or between utterances. */
+        val liveTranscript: String = "",
+        /** Acoustic features (mean F0 / RMS / words-per-sec /
+         *  duration) of the most-recently-completed utterance.
+         *  Null when no transcript has finalised yet in the
+         *  current session. */
+        val latestFeatures: com.mythara.secret.observe.acoustic.AcousticAnalyzer.Features? = null,
+        /** Environment-context snapshot tagged onto the most-
+         *  recent transcript — "are you in a meeting", "is the
+         *  room loud", "what devices are nearby". */
+        val latestEnv: com.mythara.secret.observe.env.EnvironmentContext.Snapshot? = null,
     ) {
         val readyToStart: Boolean
             get() = micGranted && (!notifRequired || notifGranted) && modelState is VoskModelStore.State.Ready
@@ -157,6 +171,25 @@ class SecretSettingsViewModel @Inject constructor(
             store.state.collect { s ->
                 _state.update { it.copy(observeState = s) }
                 if (s is ObserveState.Running) refreshTranscripts()
+            }
+        }
+        // Phase G — live-UI surfaces. The session pushes the
+        // freshest partial / acoustic / env data via these flows;
+        // we mirror them onto the UI state so SecretSettingsScreen
+        // can render the ticker + readout + env hints in real time.
+        viewModelScope.launch {
+            session.liveTranscript.collect { t ->
+                _state.update { it.copy(liveTranscript = t) }
+            }
+        }
+        viewModelScope.launch {
+            session.latestFeatures.collect { f ->
+                _state.update { it.copy(latestFeatures = f) }
+            }
+        }
+        viewModelScope.launch {
+            session.latestEnv.collect { e ->
+                _state.update { it.copy(latestEnv = e) }
             }
         }
         viewModelScope.launch {

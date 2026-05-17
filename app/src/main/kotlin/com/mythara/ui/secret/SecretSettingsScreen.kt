@@ -50,6 +50,7 @@ import com.mythara.ui.secret.speaker.SpeakerEnrollmentDialog
 import com.mythara.ui.secret.speaker.SpeakerEnrollmentViewModel
 import com.mythara.secret.observe.extract.gemma.GemmaModelStore
 import com.mythara.secret.observe.vosk.VoskModelStore
+import androidx.compose.ui.text.font.FontWeight
 import com.mythara.ui.theme.Glyph
 import com.mythara.ui.theme.MytharaColors
 
@@ -213,6 +214,19 @@ fun SecretSettingsScreen(
 
         Spacer(Modifier.height(14.dp))
 
+        // Phase G.1 — prominent banner when the Vosk speech model
+        // isn't installed yet. Observe.start() returns "Vosk model
+        // not ready" silently otherwise; the user just sees a red
+        // error pill with no actionable path. This banner gives
+        // them a one-tap install + makes the gate obvious.
+        if (state.modelState !is VoskModelStore.State.Ready) {
+            ObserveModelMissingBanner(
+                state = state.modelState,
+                onInstall = { vm.ensureModel() },
+            )
+            Spacer(Modifier.height(14.dp))
+        }
+
         Panel("controls") {
             val active = state.observeState.isActive
 
@@ -259,6 +273,24 @@ fun SecretSettingsScreen(
                 text = "${Glyph.AccentBar} a persistent system notification appears whenever the service runs — Android requires it.",
                 color = MytharaColors.FgDim,
                 style = MaterialTheme.typography.bodySmall,
+            )
+        }
+
+        // Phase G.2 + G.3 + G.4 — live Observe readout. Only
+        // rendered while a session is active. Shows the rolling
+        // partial transcript (G.2), the most-recent utterance's
+        // pitch / energy / rate / duration (G.3), and the env
+        // context (G.4 — in-meeting flag, ambient bucket, nearby
+        // devices). Empties out automatically when the session
+        // stops.
+        if (state.observeState is ObserveState.Running ||
+            state.observeState is ObserveState.Paused
+        ) {
+            Spacer(Modifier.height(14.dp))
+            ObserveLivePanel(
+                liveTranscript = state.liveTranscript,
+                features = state.latestFeatures,
+                env = state.latestEnv,
             )
         }
 
@@ -1143,5 +1175,197 @@ private fun ComboCheatsheet() {
         ComboRow(PAD_GREEN, PAD_AMBER, "Mark moment", "vault row + latest HR")
         ComboRow(PAD_BLUE, PAD_BLUE, "Start PTT", "watch push-to-talk")
         ComboRow(PAD_RED, PAD_GREEN, "End session", "hard stop")
+    }
+}
+
+/**
+ * Phase G.1 — prominent banner shown at the top of the Observe
+ * panel when the Vosk speech model isn't installed (or is
+ * downloading / failed). Replaces the silent "Vosk model not
+ * ready" error path with a one-tap install + progress bar.
+ *
+ * Renders nothing when the model is Ready (banner is suppressed
+ * by the caller in that case).
+ */
+@Composable
+private fun ObserveModelMissingBanner(
+    state: VoskModelStore.State,
+    onInstall: () -> Unit,
+) {
+    val (label, body, actionText, actionColor) = when (state) {
+        is VoskModelStore.State.Missing -> Quad(
+            "${Glyph.CircleOutline} speech model required",
+            "Observe mode needs the Vosk speech recogniser (~40 MB) before it can transcribe. One-tap install — runs offline once downloaded; no audio leaves the device.",
+            "${Glyph.Arrow} install speech model",
+            MytharaColors.Charple,
+        )
+        is VoskModelStore.State.Downloading -> Quad(
+            "${Glyph.Ellipsis} downloading ${state.pct}%",
+            "Vosk model ${state.bytes / 1_000_000} of ${state.total / 1_000_000} MB. Once finished Observe can start instantly; the file persists across reinstalls of the app.",
+            "${Glyph.Ellipsis} please wait",
+            MytharaColors.Citron,
+        )
+        is VoskModelStore.State.Extracting -> Quad(
+            "${Glyph.Ellipsis} unpacking model",
+            "Final step before Observe can start.",
+            "${Glyph.Ellipsis} please wait",
+            MytharaColors.Citron,
+        )
+        is VoskModelStore.State.Failed -> Quad(
+            "${Glyph.Cross} download failed",
+            state.message,
+            "${Glyph.Refresh} try again",
+            MytharaColors.Sriracha,
+        )
+        is VoskModelStore.State.Ready -> return  // suppressed
+    }
+    val borderColor = when (state) {
+        is VoskModelStore.State.Failed -> MytharaColors.Sriracha
+        is VoskModelStore.State.Downloading, is VoskModelStore.State.Extracting -> MytharaColors.Citron
+        else -> MytharaColors.Charple
+    }
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(12.dp))
+            .background(MytharaColors.Surface)
+            .border(1.5.dp, borderColor.copy(alpha = 0.55f), RoundedCornerShape(12.dp))
+            .padding(14.dp),
+    ) {
+        Text(
+            text = label,
+            color = borderColor,
+            style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold),
+        )
+        Spacer(Modifier.height(6.dp))
+        Text(
+            text = body,
+            color = MytharaColors.FgDim,
+            style = MaterialTheme.typography.bodySmall,
+        )
+        Spacer(Modifier.height(10.dp))
+        Button(
+            onClick = onInstall,
+            enabled = state is VoskModelStore.State.Missing || state is VoskModelStore.State.Failed,
+            colors = ButtonDefaults.buttonColors(
+                containerColor = actionColor,
+                contentColor = MytharaColors.Bg,
+            ),
+        ) {
+            Text(actionText)
+        }
+    }
+}
+
+/** Tiny tuple for the banner content packing (used because
+ *  Triple has only 3 slots and we need 4). */
+private data class Quad<A, B, C, D>(val a: A, val b: B, val c: C, val d: D)
+
+/**
+ * Phase G.2 + G.3 + G.4 — live readout while an Observe session
+ * is active. Three stacked sections:
+ *
+ *   • Live transcript ticker — the rolling partial Vosk emits as
+ *     the user speaks. Goes blank between utterances (which is
+ *     when an utterance completed + landed in the vault).
+ *   • Acoustic readout — pitch / energy / words-per-sec /
+ *     duration of the most-recently-completed utterance.
+ *   • Environment line — env:meeting / env:loud / proximity:*
+ *     facets the EnvironmentContext computed at the same
+ *     utterance-final boundary.
+ *
+ * Nothing rendered when no session is active — caller's `if`
+ * gate elides the panel entirely in that case.
+ */
+@Composable
+private fun ObserveLivePanel(
+    liveTranscript: String,
+    features: com.mythara.secret.observe.acoustic.AcousticAnalyzer.Features?,
+    env: com.mythara.secret.observe.env.EnvironmentContext.Snapshot?,
+) {
+    Panel("live") {
+        // Live transcript ticker.
+        Text(
+            text = "${Glyph.AccentBar} live transcript",
+            color = MytharaColors.Charple,
+            style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
+        )
+        Spacer(Modifier.height(4.dp))
+        if (liveTranscript.isBlank()) {
+            Text(
+                text = "${Glyph.CircleOutline} listening… (speak to see the partial transcript here)",
+                color = MytharaColors.FgMute,
+                style = MaterialTheme.typography.bodySmall.copy(fontStyle = androidx.compose.ui.text.font.FontStyle.Italic),
+            )
+        } else {
+            Text(
+                text = "“$liveTranscript”",
+                color = MytharaColors.Fg,
+                style = MaterialTheme.typography.bodyMedium,
+            )
+        }
+
+        Spacer(Modifier.height(12.dp))
+
+        // Acoustic readout from the most-recently-completed utterance.
+        Text(
+            text = "${Glyph.AccentBar} last utterance",
+            color = MytharaColors.Charple,
+            style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
+        )
+        Spacer(Modifier.height(4.dp))
+        if (features == null) {
+            Text(
+                text = "${Glyph.CircleOutline} no utterance finalised yet this session",
+                color = MytharaColors.FgMute,
+                style = MaterialTheme.typography.bodySmall.copy(fontStyle = androidx.compose.ui.text.font.FontStyle.Italic),
+            )
+        } else {
+            Text(
+                text = buildString {
+                    append("◇ pitch ").append("%.0f".format(features.meanF0Hz)).append(" Hz")
+                    append("   ◇ energy ").append("%.3f".format(features.meanRms))
+                    append("   ◇ rate ").append("%.1f".format(features.wordsPerSec)).append(" wps")
+                    append("   ◇ ").append("%.1f".format(features.durationSec)).append(" s")
+                },
+                color = MytharaColors.FgDim,
+                style = MaterialTheme.typography.bodySmall,
+            )
+        }
+
+        // Environment context — calendar / ambient / proximity.
+        if (env != null) {
+            Spacer(Modifier.height(12.dp))
+            Text(
+                text = "${Glyph.AccentBar} environment",
+                color = MytharaColors.Charple,
+                style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
+            )
+            Spacer(Modifier.height(4.dp))
+            val tags = buildList {
+                if (env.inMeeting) add("◆ in meeting${env.meetingTitle?.let { " · $it" } ?: ""}")
+                when (env.ambient) {
+                    com.mythara.secret.observe.env.EnvironmentContext.AmbientLevel.Loud -> add("◆ loud room")
+                    com.mythara.secret.observe.env.EnvironmentContext.AmbientLevel.Quiet -> add("◇ quiet room")
+                    else -> { /* Normal — don't tag */ }
+                }
+                for (label in env.nearbyDeviceLabels) {
+                    add("◇ nearby · $label")
+                }
+            }
+            if (tags.isEmpty()) {
+                Text(
+                    text = "${Glyph.CircleOutline} nothing notable in the surroundings",
+                    color = MytharaColors.FgMute,
+                    style = MaterialTheme.typography.bodySmall.copy(fontStyle = androidx.compose.ui.text.font.FontStyle.Italic),
+                )
+            } else {
+                Text(
+                    text = tags.joinToString(" · "),
+                    color = MytharaColors.FgDim,
+                    style = MaterialTheme.typography.bodySmall,
+                )
+            }
+        }
     }
 }

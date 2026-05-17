@@ -62,6 +62,7 @@ class ObserveSession @Inject constructor(
     private val speakerVault: SpeakerVault,
     private val micBroker: MicBroker,
     private val acousticAnalyzer: AcousticAnalyzer,
+    private val environment: com.mythara.secret.observe.env.EnvironmentContext,
 ) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var job: Job? = null
@@ -71,6 +72,38 @@ class ObserveSession @Inject constructor(
 
     val isRunning: Boolean get() = job?.isActive == true
     fun transcriptCountSnapshot(): Int = transcriptCount
+
+    // ── Phase G — live-UI surfaces ────────────────────────────────
+    // The session captures partials + final acoustic features
+    // already; previously they were discarded (`ignored today;
+    // reserved for live-UI in M8.2` per the file header). Now they
+    // flow out via StateFlows so the SecretSettingsScreen Observe
+    // panel can render a live transcript ticker + an acoustic
+    // readout while a session is running.
+
+    private val _liveTranscript = kotlinx.coroutines.flow.MutableStateFlow("")
+    /** Latest partial transcript from Vosk's `recognizer.partialResult`.
+     *  Updated several times per second while the user is speaking;
+     *  cleared on utterance final + on session stop. UI ticker
+     *  observes this Flow directly. */
+    val liveTranscript: kotlinx.coroutines.flow.StateFlow<String> = _liveTranscript
+
+    private val _latestFeatures =
+        kotlinx.coroutines.flow.MutableStateFlow<AcousticAnalyzer.Features?>(null)
+    /** Latest acoustic features (pitch / energy / rate / duration)
+     *  from the most-recently-completed utterance. Stays set until
+     *  the next utterance overwrites it; cleared on session stop. */
+    val latestFeatures: kotlinx.coroutines.flow.StateFlow<AcousticAnalyzer.Features?> =
+        _latestFeatures
+
+    private val _latestEnv =
+        kotlinx.coroutines.flow.MutableStateFlow<com.mythara.secret.observe.env.EnvironmentContext.Snapshot?>(null)
+    /** Latest environment-context snapshot tagged onto the most-
+     *  recent transcript. Surfaced so the UI can show "in a
+     *  meeting · loud · with the Watch nearby" hints next to the
+     *  live transcript ticker. */
+    val latestEnv: kotlinx.coroutines.flow.StateFlow<com.mythara.secret.observe.env.EnvironmentContext.Snapshot?> =
+        _latestEnv
 
     fun start(): Result<Unit> {
         if (isRunning) return Result.success(Unit)
@@ -132,10 +165,31 @@ class ObserveSession @Inject constructor(
                             val acoustic = analyseUtterance(
                                 utteranceBuf, utteranceSize, text,
                             )
-                            writeTranscript(transcriptsDir, text, spkVec, acoustic)
+                            // Phase G — push the freshly-completed
+                            // utterance + its acoustic features +
+                            // a snapshot of the environment context
+                            // out to the UI panel before the write
+                            // happens, so the user sees the live
+                            // readout the moment they finish a
+                            // sentence.
+                            val envSnap = runCatching { environment.snapshot() }.getOrNull()
+                            _latestFeatures.value = acoustic
+                            _latestEnv.value = envSnap
+                            _liveTranscript.value = ""
+                            writeTranscript(transcriptsDir, text, spkVec, acoustic, envSnap)
                             transcriptCount += 1
                         }
                         utteranceSize = 0
+                    } else {
+                        // Phase G — emit the partial transcript so
+                        // the UI ticker can show what's being heard
+                        // in real time. The previous "ignored today"
+                        // comment is now stale.
+                        val partialJson = recognizer.partialResult
+                        val partial = asr.parseText(partialJson)
+                        if (partial.isNotBlank()) {
+                            _liveTranscript.value = partial
+                        }
                     }
                 }
                 // Drain final result on graceful stop.
@@ -154,6 +208,12 @@ class ObserveSession @Inject constructor(
                 recorder.stop()
                 recorder.release()
                 micBroker.release(MicBroker.Client.OBSERVE)
+                // Phase G — clear the live-UI surfaces on session
+                // end so a stale transcript / acoustic readout
+                // doesn't linger after stop.
+                _liveTranscript.value = ""
+                _latestFeatures.value = null
+                _latestEnv.value = null
                 Log.d(TAG, "session ended; transcripts=$transcriptCount")
             }
         }
@@ -225,6 +285,7 @@ class ObserveSession @Inject constructor(
         text: String,
         spkVec: FloatArray? = null,
         acoustic: AcousticAnalyzer.Features = AcousticAnalyzer.Features(0f, 0f, 0f, 0f),
+        env: com.mythara.secret.observe.env.EnvironmentContext.Snapshot? = null,
     ) {
         val now = System.currentTimeMillis()
 
@@ -297,11 +358,19 @@ class ObserveSession @Inject constructor(
         // ---- Vault writes ----
         // 1. Working-tier record holding the raw transcript text + its
         //    embedding. Stays local; never synced (see MemorySync filter).
+        // Phase G — append environment facets (env:meeting / env:loud /
+        // env:quiet / proximity:* / etc.) so future learning queries
+        // can filter "what was I saying while in a meeting" without
+        // re-parsing the timestamp against calendar etc. The facets
+        // come from EnvironmentContext.snapshot(), captured at the
+        // utterance-final boundary above.
+        val envFacets: List<String> = env?.toFacets().orEmpty()
         val refId = "transcript:$base"
         val transcriptFacets = buildList {
             add("kind:transcript")
             if (speakerFacet != null) add(speakerFacet)
             addAll(acousticFacets)
+            addAll(envFacets)
         }
         vault.add(
             content = text,
