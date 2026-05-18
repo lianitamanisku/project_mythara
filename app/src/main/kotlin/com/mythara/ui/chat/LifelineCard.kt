@@ -10,6 +10,7 @@ import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -237,6 +238,29 @@ fun LifelineCard(
                         style = MaterialTheme.typography.labelSmall,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
+                    )
+                }
+                // Discoverable "+ context" / "✏ edit context" chip.
+                // Long-press still works (canonical), but a lot of
+                // users never discover long-press gestures — this
+                // chip surfaces the affordance inline so the option
+                // is visible at a glance.
+                if (canAnnotate) {
+                    Spacer(Modifier.size(8.dp))
+                    Text(
+                        text = "│",
+                        color = MytharaColors.SurfaceHigh,
+                        style = MaterialTheme.typography.labelSmall,
+                    )
+                    Spacer(Modifier.size(8.dp))
+                    Text(
+                        text = if (item.userContext.isNullOrBlank()) "+ context" else "✏ edit",
+                        color = MytharaColors.Charple,
+                        style = MaterialTheme.typography.labelSmall
+                            .copy(fontWeight = FontWeight.SemiBold),
+                        modifier = Modifier
+                            .clickable { sheetVisible = true }
+                            .padding(vertical = 2.dp, horizontal = 4.dp),
                     )
                 }
             }

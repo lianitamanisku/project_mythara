@@ -30,6 +30,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -990,6 +991,10 @@ fun SecretSettingsScreen(
 
         Spacer(Modifier.height(14.dp))
 
+        RecaptionAllPanel(vm = vm)
+
+        Spacer(Modifier.height(14.dp))
+
         Panel("danger zone") {
             Text(
                 text = "forget everything wipes Observe scratch + the learning journal. " +
@@ -1365,6 +1370,101 @@ private fun ObserveLivePanel(
                     color = MytharaColors.FgDim,
                     style = MaterialTheme.typography.bodySmall,
                 )
+            }
+        }
+    }
+}
+
+/**
+ * "Re-caption all old photos" — kicks off a background sweep that
+ * resets every locally-captured Lifeline row back to PENDING and
+ * runs the full vision cascade (Gemini Flash by default, MiniMax-VL
+ * fallback) against each. Folds in any `user_context` notes the user
+ * had added on individual photos.
+ *
+ * UI states:
+ *   - Idle  → trigger button + caveat copy.
+ *   - Running → linear progress bar + "X of Y processed", cancel
+ *               button stays available.
+ *   - Done  → green badge + "captioned X of Y in Z s" + dismiss.
+ *   - Failed → red badge + error reason + dismiss + retry.
+ */
+@Composable
+private fun RecaptionAllPanel(vm: SecretSettingsViewModel) {
+    val state by vm.recaptionState.collectAsState()
+    Panel("re-caption all photos") {
+        when (val s = state) {
+            is com.mythara.lifeline.RecaptionAllRunner.State.Idle -> {
+                Text(
+                    text = "Walks every locally-captured photo in your Lifeline and " +
+                        "regenerates the caption with the current vision backend (Gemini Flash). " +
+                        "Folds in any context you've added on individual photos. " +
+                        "Rate-limited (~4 s/photo) so a few hundred photos take several minutes.",
+                    color = MytharaColors.FgDim,
+                    style = MaterialTheme.typography.bodySmall,
+                )
+                Spacer(Modifier.height(10.dp))
+                Button(
+                    onClick = { vm.startRecaptionAll() },
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = MytharaColors.Charple, contentColor = MytharaColors.Fg,
+                    ),
+                ) { Text("${Glyph.Arrow} re-caption all") }
+            }
+            is com.mythara.lifeline.RecaptionAllRunner.State.Running -> {
+                val frac = if (s.total > 0) s.attempted / s.total.toFloat() else 0f
+                Text(
+                    text = "${Glyph.Ellipsis} processing ${s.attempted} of ${s.total} · " +
+                        "${s.captioned} new caption${if (s.captioned == 1) "" else "s"}",
+                    color = MytharaColors.Citron,
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+                Spacer(Modifier.height(8.dp))
+                LinearProgressIndicator(
+                    progress = { frac.coerceIn(0f, 1f) },
+                    modifier = Modifier.fillMaxWidth(),
+                    color = MytharaColors.Charple,
+                    trackColor = MytharaColors.SurfaceHigh,
+                )
+                Spacer(Modifier.height(8.dp))
+                TextButton(onClick = { vm.cancelRecaptionAll() }) {
+                    Text("${Glyph.Cross} cancel", color = MytharaColors.Sriracha)
+                }
+            }
+            is com.mythara.lifeline.RecaptionAllRunner.State.Done -> {
+                Text(
+                    text = "${Glyph.Check} captioned ${s.captioned} of ${s.total} in " +
+                        "${"%.1f".format(s.durationMs / 1000.0)} s",
+                    color = MytharaColors.Julep,
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+                Spacer(Modifier.height(8.dp))
+                Row {
+                    TextButton(onClick = { vm.acknowledgeRecaption() }) {
+                        Text("dismiss", color = MytharaColors.FgMute)
+                    }
+                    Spacer(Modifier.size(8.dp))
+                    TextButton(onClick = { vm.startRecaptionAll() }) {
+                        Text("${Glyph.Arrow} run again", color = MytharaColors.Charple)
+                    }
+                }
+            }
+            is com.mythara.lifeline.RecaptionAllRunner.State.Failed -> {
+                Text(
+                    text = "${Glyph.Cross} ${s.message}",
+                    color = MytharaColors.Sriracha,
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+                Spacer(Modifier.height(8.dp))
+                Row {
+                    TextButton(onClick = { vm.acknowledgeRecaption() }) {
+                        Text("dismiss", color = MytharaColors.FgMute)
+                    }
+                    Spacer(Modifier.size(8.dp))
+                    TextButton(onClick = { vm.startRecaptionAll() }) {
+                        Text("${Glyph.Arrow} retry", color = MytharaColors.Charple)
+                    }
+                }
             }
         }
     }

@@ -327,6 +327,48 @@ interface LifelineDao {
         """,
     )
     suspend fun markDeleted(id: Long, nowMs: Long)
+
+    /** Every locally-captured, non-deleted photo, newest first.
+     *  Used by the bulk re-caption worker to walk the whole archive
+     *  and refresh every caption with the current vision backend
+     *  (e.g. when the user adds context for the first time, or when
+     *  the cascade was previously failing). */
+    @Query(
+        """
+        SELECT * FROM lifeline_entries
+        WHERE is_remote = 0 AND is_deleted = 0
+        ORDER BY taken_ms DESC
+        """,
+    )
+    suspend fun listAllLocal(): List<LifelineEntity>
+
+    /** Count of locally-captured non-deleted photos — drives the
+     *  "X of Y" progress label on the re-caption-all flow without
+     *  loading every row into memory just to know the total. */
+    @Query(
+        """
+        SELECT COUNT(*) FROM lifeline_entries
+        WHERE is_remote = 0 AND is_deleted = 0
+        """,
+    )
+    suspend fun countAllLocal(): Int
+
+    /** Reset every locally-captured photo back to PENDING so the
+     *  captioning worker treats it as fresh. Preserves user_context
+     *  so re-captioning still folds in any notes the user added. */
+    @Query(
+        """
+        UPDATE lifeline_entries
+        SET caption_status = 'PENDING',
+            caption_text = NULL,
+            caption_model = NULL,
+            captioned_at_ms = NULL,
+            caption_attempts = 0,
+            synced_at_ms = NULL
+        WHERE is_remote = 0 AND is_deleted = 0
+        """,
+    )
+    suspend fun markAllLocalPending(): Int
 }
 
 /**

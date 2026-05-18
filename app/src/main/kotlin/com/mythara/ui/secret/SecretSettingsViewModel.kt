@@ -63,7 +63,23 @@ class SecretSettingsViewModel @Inject constructor(
     private val resonanceEngine: ResonanceAudioEngine,
     private val resonanceLoop: ResonanceLoop,
     private val resonanceController: ResonanceController,
+    private val recaptionAllRunner: com.mythara.lifeline.RecaptionAllRunner,
 ) : ViewModel() {
+
+    /** Direct StateFlow exposure of the bulk-recaption runner so the
+     *  SecretSettings panel can drive a progress bar without us
+     *  duplicating its State enum into our own [State]. */
+    val recaptionState: StateFlow<com.mythara.lifeline.RecaptionAllRunner.State>
+        get() = recaptionAllRunner.state
+
+    /** Kicks off bulk re-caption (idempotent if already running). */
+    fun startRecaptionAll() = recaptionAllRunner.start()
+
+    /** Cancels an in-flight bulk re-caption. */
+    fun cancelRecaptionAll() = recaptionAllRunner.cancel()
+
+    /** Dismisses a finished / failed status card. */
+    fun acknowledgeRecaption() = recaptionAllRunner.acknowledge()
 
     data class State(
         val observeState: ObserveState = ObserveState.Idle,

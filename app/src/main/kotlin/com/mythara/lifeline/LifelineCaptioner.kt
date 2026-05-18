@@ -47,6 +47,65 @@ class LifelineCaptioner @Inject constructor(
     private val vision: VisionService,
 ) {
     /**
+     * Re-caption EVERY locally-captured photo from scratch. Resets
+     * every row back to PENDING (clearing the previous caption +
+     * attempt counter) and runs the captioning loop end-to-end.
+     *
+     * Use cases:
+     *  - User just configured a Gemini key and wants captions for
+     *    photos that previously fell through the cascade.
+     *  - User has been adding `user_context` to old rows and wants
+     *    those folded into refreshed captions.
+     *  - Vision backend changed (e.g. Gemma multimodal init started
+     *    succeeding after a model swap) and the user wants every
+     *    archive caption re-rolled with the better backend.
+     *
+     * Rate-limited the same way as [captionPending] ([MIN_GAP_MS]
+     * between calls) so a 200-photo archive doesn't slam the API in
+     * one second.
+     *
+     * @param onProgress  Reports `(captioned, attempted, total)` after
+     *                    each row. Suitable for surfacing a progress
+     *                    bar in the calling UI.
+     */
+    suspend fun recaptionAll(
+        onProgress: suspend (captioned: Int, attempted: Int, total: Int) -> Unit = { _, _, _ -> },
+    ): Int = withContext(Dispatchers.IO) {
+        val total = runCatching { repo.dao.countAllLocal() }.getOrDefault(0)
+        if (total == 0) {
+            onProgress(0, 0, 0)
+            return@withContext 0
+        }
+        // Reset all local rows first so subsequent inserts / scans
+        // don't race with our walk — every row we touch comes from
+        // a stable PENDING starting state.
+        runCatching { repo.dao.markAllLocalPending() }
+            .onFailure { Log.w(TAG, "markAllLocalPending failed: ${it.message}") }
+
+        val rows = runCatching { repo.dao.listAllLocal() }.getOrDefault(emptyList())
+        var captioned = 0
+        var lastMs = 0L
+        for ((index, row) in rows.withIndex()) {
+            val now = System.currentTimeMillis()
+            if (lastMs > 0 && (now - lastMs) < MIN_GAP_MS) {
+                delay(MIN_GAP_MS - (now - lastMs))
+            }
+            // Re-read after the reset so we have the fresh PENDING
+            // state + any user_context that was preserved.
+            val fresh = runCatching { repo.dao.byId(row.id) }.getOrNull() ?: row
+            val ok = runCatching { captionOne(fresh) }.getOrElse { e ->
+                Log.w(TAG, "recaptionAll row=${row.id} threw: ${e.message}")
+                false
+            }
+            if (ok) captioned++
+            lastMs = System.currentTimeMillis()
+            onProgress(captioned, index + 1, total)
+        }
+        Log.d(TAG, "recaptionAll: $total scanned, $captioned new captions")
+        captioned
+    }
+
+    /**
      * Caption every pending row, one at a time. Returns the count of
      * rows successfully captioned in this pass.
      */
