@@ -111,6 +111,10 @@ class TermuxSetupPanelViewModel @Inject constructor(
                 }
                 out.contains("\"status\":\"not_installed\"") ->
                     VerifyState.Failed("Termux not installed — install from F-Droid.")
+                out.contains("\"status\":\"play_store_variant\"") ->
+                    VerifyState.Failed("Play Store Termux is incompatible — install the F-Droid build instead.")
+                out.contains("ERR_SERVICE_NOT_FOUND") || out.contains("\"errCode\":-1001") ->
+                    VerifyState.Failed("RunCommandService not found — install the F-Droid Termux build (not the Play Store version).")
                 out.contains("\"status\":\"timeout\"") ->
                     VerifyState.Failed("Timed out. Did you set allow-external-apps=true in ~/.termux/termux.properties?")
                 else -> VerifyState.Failed("Unexpected response: ${out.take(160)}")
@@ -187,6 +191,19 @@ fun TermuxSetupPanel(vm: TermuxSetupPanelViewModel = hiltViewModel()) {
 
         Spacer(Modifier.height(8.dp))
 
+        // Play Store variant takes priority over every other state —
+        // the badge can say "NeedsVerification" but the underlying
+        // issue is the wrong APK, and clicking Verify will never
+        // succeed until that's fixed. Show the specific call-to-action
+        // first so the user doesn't waste time troubleshooting
+        // termux.properties.
+        if (state != TermuxAvailability.State.NotInstalled && vm.availability.isPlayStoreVariant()) {
+            PlayStoreVariantBlock(
+                onOpenFDroid = { openFDroid(ctx, TermuxAvailability.TERMUX_PKG) },
+            )
+            return@Column
+        }
+
         when (state) {
             TermuxAvailability.State.NotInstalled -> NotInstalledBlock(
                 onOpenFDroid = { openFDroid(ctx, TermuxAvailability.TERMUX_PKG) },
@@ -224,6 +241,32 @@ fun TermuxSetupPanel(vm: TermuxSetupPanelViewModel = hiltViewModel()) {
             else -> { /* idle / running — nothing extra */ }
         }
     }
+}
+
+@Composable
+private fun PlayStoreVariantBlock(onOpenFDroid: () -> Unit) {
+    Text(
+        text = "${Glyph.Cross} You have the Google Play Store edition of Termux installed. " +
+            "The Play Store build is STRIPPED DOWN — it doesn't ship RunCommandService, so " +
+            "the agent's termux_exec / termux_api tools can't reach it no matter how you " +
+            "configure termux.properties.\n\n" +
+            "Fix:\n" +
+            "  1. Uninstall the current Termux (Settings → Apps → Termux → Uninstall).\n" +
+            "  2. Install Termux from F-Droid — the maintained release.\n" +
+            "  3. Also install Termux:API from F-Droid for the platform tools.\n" +
+            "  4. Enable allow-external-apps=true in ~/.termux/termux.properties.\n" +
+            "  5. Re-open this panel + tap verify.",
+        color = MytharaColors.Sriracha,
+        style = MaterialTheme.typography.bodySmall,
+    )
+    Spacer(Modifier.height(8.dp))
+    Button(
+        onClick = onOpenFDroid,
+        colors = ButtonDefaults.buttonColors(
+            containerColor = MytharaColors.Charple,
+            contentColor = MytharaColors.Bg,
+        ),
+    ) { Text("open F-Droid (com.termux)") }
 }
 
 @Composable

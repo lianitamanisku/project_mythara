@@ -2,6 +2,7 @@ package com.mythara.services
 
 import android.content.Context
 import android.content.pm.PackageManager
+import android.os.Build
 import dagger.hilt.android.qualifiers.ApplicationContext
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -91,6 +92,26 @@ class TermuxAvailability @Inject constructor(
      *  attempting an exec on devices where Termux isn't installed
      *  at all. */
     fun isInstalled(): Boolean = isInstalled(ctx.packageManager, TERMUX_PKG)
+
+    /** True when the installed Termux package came from the Google
+     *  Play Store. The Play Store edition is a stripped-down build
+     *  that DOESN'T ship `RunCommandService` — meaning `termux_exec`
+     *  will always fail with "service not found" no matter how the
+     *  user configures termux.properties. The fix is to uninstall
+     *  the Play variant + install the F-Droid build, which is the
+     *  only maintained release.
+     *
+     *  Returns false when Termux isn't installed at all, OR when
+     *  it's installed from F-Droid / GitHub / sideload. */
+    fun isPlayStoreVariant(): Boolean = runCatching {
+        val installer = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            ctx.packageManager.getInstallSourceInfo(TERMUX_PKG).installingPackageName
+        } else {
+            @Suppress("DEPRECATION")
+            ctx.packageManager.getInstallerPackageName(TERMUX_PKG)
+        }
+        installer == "com.android.vending"
+    }.getOrDefault(false)
 
     private fun isInstalled(pm: PackageManager, pkg: String): Boolean = runCatching {
         @Suppress("DEPRECATION")

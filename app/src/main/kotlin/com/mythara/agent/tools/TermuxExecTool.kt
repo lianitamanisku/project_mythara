@@ -120,6 +120,12 @@ class TermuxExecTool @Inject constructor(
         if (!availability.isInstalled()) {
             return ToolResult.ok(NOT_INSTALLED_JSON)
         }
+        // Google Play Store Termux is a stripped-down build that
+        // doesn't ship RunCommandService at all. Fail fast with a
+        // clear hint instead of waiting for the 12-second timeout.
+        if (availability.isPlayStoreVariant()) {
+            return ToolResult.ok(PLAY_STORE_VARIANT_JSON)
+        }
 
         val rawCmd = args["command"]?.jsonPrimitive?.contentOrNull()?.trim().orEmpty()
         if (rawCmd.isBlank()) return ToolResult.fail("command must be non-empty")
@@ -230,11 +236,31 @@ class TermuxExecTool @Inject constructor(
                 addFlags(Intent.FLAG_INCLUDE_STOPPED_PACKAGES)
             }
 
-            try {
+            val started = try {
                 context.startService(runIntent)
             } catch (t: Throwable) {
-                Log.w(TAG, "startService failed: ${t.message}")
-                return null
+                Log.w(TAG, "startService threw: ${t.message}")
+                return Bundle().apply {
+                    putInt("errCode", ERR_SERVICE_THREW)
+                    putString("errmsg", "startService threw: ${t.message ?: t.javaClass.simpleName}")
+                }
+            }
+            // startService returns null when the system can't resolve
+            // the component — typically because RunCommandService
+            // isn't declared in the installed Termux build (the Play
+            // Store variant strips it). Surface that distinctly from
+            // a permission-denied silent drop.
+            if (started == null) {
+                Log.w(TAG, "startService returned null — RunCommandService component not resolved")
+                return Bundle().apply {
+                    putInt("errCode", ERR_SERVICE_NOT_FOUND)
+                    putString(
+                        "errmsg",
+                        "RunCommandService not found — the installed Termux build doesn't ship it. " +
+                            "Most likely you have the Google Play Store variant; uninstall it and " +
+                            "install Termux from F-Droid instead.",
+                    )
+                }
             }
 
             // Pad the timeout slightly so Termux's own command-runner
@@ -268,7 +294,17 @@ class TermuxExecTool @Inject constructor(
         /** Bundle key Termux uses for the nested result extras. */
         private const val EXTRA_RESULT_BUNDLE = "result"
 
+        /** Synthetic errCode values surfaced by awaitTermuxResult when
+         *  the bridge fails BEFORE Termux even sees the request. Kept
+         *  out of the 0..127 range Termux uses for normal exit codes
+         *  so they never collide. */
+        private const val ERR_SERVICE_NOT_FOUND = -1001
+        private const val ERR_SERVICE_THREW = -1002
+
         private const val NOT_INSTALLED_JSON =
             """{"status":"not_installed","hint":"install Termux from F-Droid then enable allow-external-apps=true in ~/.termux/termux.properties; meanwhile fall back to run_shell"}"""
+
+        private const val PLAY_STORE_VARIANT_JSON =
+            """{"status":"play_store_variant","hint":"the installed Termux is from the Google Play Store, which is a stripped-down build that doesn't ship RunCommandService. Uninstall it and install Termux from F-Droid (https://f-droid.org/packages/com.termux/) — the maintained release. Until then, fall back to run_shell."}"""
     }
 }
