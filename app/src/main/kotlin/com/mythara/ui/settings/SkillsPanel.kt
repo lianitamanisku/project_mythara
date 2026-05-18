@@ -47,6 +47,7 @@ import javax.inject.Inject
 class SkillsPanelViewModel @Inject constructor(
     private val store: SkillStore,
     private val runner: SkillRunner,
+    private val patternDetector: com.mythara.agent.SkillPatternDetector,
 ) : ViewModel() {
     private val _skills = MutableStateFlow<List<Skill>>(emptyList())
     val skills: StateFlow<List<Skill>> = _skills.asStateFlow()
@@ -59,12 +60,33 @@ class SkillsPanelViewModel @Inject constructor(
     private val _runStatus = MutableStateFlow<Map<String, String>>(emptyMap())
     val runStatus: StateFlow<Map<String, String>> = _runStatus.asStateFlow()
 
+    /** Tool-chain shapes the cross-turn detector has seen ≥ 2 times
+     *  in the last 30 days. Lets the user see what habits Mythara
+     *  has noticed BEFORE the offer fires — useful for early
+     *  feedback ("yes save this", "no this is noise"). */
+    private val _detectedPatterns =
+        MutableStateFlow<List<com.mythara.agent.SkillPatternDetector.PatternHit>>(emptyList())
+    val detectedPatterns: StateFlow<List<com.mythara.agent.SkillPatternDetector.PatternHit>> =
+        _detectedPatterns.asStateFlow()
+
     fun refresh() {
         viewModelScope.launch {
             _loading.value = true
             _skills.value = runCatching { store.list() }.getOrDefault(emptyList())
                 .sortedByDescending { it.lastRunMs ?: it.createdMs }
+            _detectedPatterns.value = runCatching { patternDetector.frequencyTable(minRepeats = 2) }
+                .getOrDefault(emptyList())
             _loading.value = false
+        }
+    }
+
+    /** Wipe the cross-turn pattern history. Skills you've already
+     *  saved are unaffected — this only clears the "what habits
+     *  has Mythara noticed" memory. */
+    fun clearDetectedPatterns() {
+        viewModelScope.launch {
+            runCatching { patternDetector.clear() }
+            refresh()
         }
     }
 
@@ -122,8 +144,10 @@ fun SkillsPanel(vm: SkillsPanelViewModel = hiltViewModel()) {
     val skills by vm.skills.collectAsState()
     val loading by vm.loading.collectAsState()
     val runStatus by vm.runStatus.collectAsState()
+    val detectedPatterns by vm.detectedPatterns.collectAsState()
     var expanded by remember { mutableStateOf<String?>(null) }
     var pendingDelete by remember { mutableStateOf<Skill?>(null) }
+    var pendingForgetPatterns by remember { mutableStateOf(false) }
 
     LaunchedEffect(Unit) { vm.refresh() }
 
@@ -179,6 +203,58 @@ fun SkillsPanel(vm: SkillsPanelViewModel = hiltViewModel()) {
                 }
             }
         }
+
+        // Detected patterns — what the cross-turn detector has seen
+        // ≥ 2 times in the last 30 days. The "offer to save as a
+        // skill" prompt fires at REPEAT_THRESHOLD (3); rows below
+        // that show what's brewing, rows above are highlighted
+        // because Mythara is about to (or already did) surface them.
+        if (detectedPatterns.isNotEmpty()) {
+            Spacer(Modifier.height(14.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    text = "${Glyph.DiamondOutline} detected patterns",
+                    style = MaterialTheme.typography.labelLarge.copy(color = MytharaColors.FgMute),
+                )
+                Text(
+                    text = "${detectedPatterns.size} shape${if (detectedPatterns.size == 1) "" else "s"}",
+                    color = MytharaColors.FgDim,
+                    style = MaterialTheme.typography.labelSmall,
+                )
+            }
+            Spacer(Modifier.height(6.dp))
+            Text(
+                text = "${Glyph.AccentBar} tool-chain shapes Mythara has noticed across turns in the last 30 days. " +
+                    "When a shape repeats 3×, the next turn will offer to save it as a skill.",
+                color = MytharaColors.FgDim,
+                style = MaterialTheme.typography.bodySmall,
+            )
+            Spacer(Modifier.height(8.dp))
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                for (hit in detectedPatterns) {
+                    PatternRow(hit = hit)
+                }
+            }
+            Spacer(Modifier.height(8.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.End,
+            ) {
+                androidx.compose.material3.TextButton(
+                    onClick = { pendingForgetPatterns = true },
+                ) {
+                    Text(
+                        "${Glyph.Cross} forget patterns",
+                        color = MytharaColors.Sriracha,
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                }
+            }
+        }
     }
 
     pendingDelete?.let { skill ->
@@ -213,6 +289,84 @@ fun SkillsPanel(vm: SkillsPanelViewModel = hiltViewModel()) {
             },
             containerColor = MytharaColors.Surface,
         )
+    }
+
+    if (pendingForgetPatterns) {
+        androidx.compose.material3.AlertDialog(
+            onDismissRequest = { pendingForgetPatterns = false },
+            title = { Text("forget detected patterns?", color = MytharaColors.Fg) },
+            text = {
+                Text(
+                    "wipes the 30-day rolling history of tool-chain shapes Mythara has been " +
+                        "tracking. Already-saved skills are NOT affected — only the " +
+                        "\"what habits has she noticed\" memory.",
+                    color = MytharaColors.FgDim,
+                )
+            },
+            confirmButton = {
+                androidx.compose.material3.Button(
+                    onClick = {
+                        vm.clearDetectedPatterns()
+                        pendingForgetPatterns = false
+                    },
+                    colors = androidx.compose.material3.ButtonDefaults.buttonColors(
+                        containerColor = MytharaColors.Sriracha,
+                        contentColor = MytharaColors.Fg,
+                    ),
+                ) { Text("${Glyph.Cross} forget") }
+            },
+            dismissButton = {
+                androidx.compose.material3.TextButton(onClick = { pendingForgetPatterns = false }) {
+                    Text("cancel", color = MytharaColors.FgMute)
+                }
+            },
+            containerColor = MytharaColors.Surface,
+        )
+    }
+}
+
+/** Renders one detected tool-chain shape with its repetition count.
+ *  Rows that have crossed the offer threshold (`shouldOffer = true`)
+ *  are tinted Charple to signal "Mythara is about to / already did
+ *  surface this as a save-skill prompt". Sub-threshold rows are
+ *  ambient — useful early-feedback affordance but not actionable
+ *  yet. */
+@Composable
+private fun PatternRow(hit: com.mythara.agent.SkillPatternDetector.PatternHit) {
+    val accent = if (hit.shouldOffer) MytharaColors.Charple else MytharaColors.SurfaceHigh
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(8.dp))
+            .background(MytharaColors.Bg)
+            .border(1.dp, accent, RoundedCornerShape(8.dp))
+            .padding(horizontal = 10.dp, vertical = 8.dp),
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                text = hit.chainShape.joinToString(" → "),
+                color = MytharaColors.Fg,
+                style = MaterialTheme.typography.bodySmall,
+                modifier = Modifier.weight(1f),
+            )
+            Text(
+                text = "${hit.totalRepeats}×",
+                color = if (hit.shouldOffer) MytharaColors.Charple else MytharaColors.FgDim,
+                style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.SemiBold),
+            )
+        }
+        if (hit.shouldOffer) {
+            Spacer(Modifier.height(2.dp))
+            Text(
+                text = "${Glyph.DiamondFilled} offer-worthy — Mythara will suggest saving this",
+                color = MytharaColors.Bok,
+                style = MaterialTheme.typography.labelSmall,
+            )
+        }
     }
 }
 
