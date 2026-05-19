@@ -249,8 +249,16 @@ class TermuxExecTool @Inject constructor(
                 ContextCompat.RECEIVER_NOT_EXPORTED,
             )
 
-            val piFlags = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            // FLAG_MUTABLE is REQUIRED here — Termux fills the result
+            // Bundle into the intent extras via PendingIntent.send(ctx,
+            // code, resultIntent). Immutable PIs drop those extras
+            // silently (no error, just an empty Bundle in onReceive),
+            // which sent us down a 90-minute rabbit hole the first
+            // time it hit. The mutability surface is bounded: the PI
+            // action is a per-call UUID nobody outside this process
+            // can guess + the target is our own package.
+            val piFlags = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_MUTABLE
             } else {
                 PendingIntent.FLAG_UPDATE_CURRENT
             }
