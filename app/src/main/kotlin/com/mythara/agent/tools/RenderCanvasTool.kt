@@ -241,6 +241,7 @@ class RenderCanvasTool @Inject constructor(
     // failure on a mood-selector render that used top-level
     // refs and crashed with "html is not defined".
     const __mh = htm.bind(preact.h);
+    // Top-level globals — `useState` / `html` work without a prefix.
     window.html = __mh;
     window.h = preact.h;
     window.render = preact.render;
@@ -251,12 +252,26 @@ class RenderCanvasTool @Inject constructor(
     window.useRef = preactHooks.useRef;
     window.useMemo = preactHooks.useMemo;
     window.useCallback = preactHooks.useCallback;
+    // window.mythara.* — namespaced access.
     window.mythara = window.mythara || {};
     Object.assign(window.mythara, {
       h: preact.h,
       render: preact.render,
       Fragment: preact.Fragment,
       html: __mh,
+      useState: preactHooks.useState,
+      useEffect: preactHooks.useEffect,
+      useReducer: preactHooks.useReducer,
+      useRef: preactHooks.useRef,
+      useMemo: preactHooks.useMemo,
+      useCallback: preactHooks.useCallback,
+    });
+    // ALSO patch hooks onto `preact` itself — the natural code
+    // shape `const { useState } = preact` would otherwise fail
+    // because preact's core bundle doesn't ship hooks; they live
+    // on preactHooks. Field-tested: model produced exactly that
+    // destructure on every webgl-preact render.
+    Object.assign(preact, {
       useState: preactHooks.useState,
       useEffect: preactHooks.useEffect,
       useReducer: preactHooks.useReducer,
@@ -323,12 +338,25 @@ class RenderCanvasTool @Inject constructor(
   </script>
 """)
         }
+        // Body skeleton — `<div id="root">` is ALWAYS present (even
+        // when the agent's body doesn't mention it) so calling
+        // `render(vnode, document.getElementById('root'))` never
+        // resolves to null. The agent can either:
+        //   1. Put structural HTML directly under the wrapper (no
+        //      Preact involvement — content lands inside #root,
+        //      Preact ignores it).
+        //   2. Mount a Preact tree into #root via render(...) —
+        //      Preact takes over and replaces children.
+        // The wrapper class still drives the dark background +
+        // safe-area inset styling from canvas.css.
         append("""</head>
 <body class="bg-mythara-bg text-mythara-fg">
   <div class="mythara-stage">
+    <div id="root" class="w-full h-full">
 """)
         append(body)
-        append("""  </div>
+        append("""    </div>
+  </div>
 </body>
 </html>
 """)
