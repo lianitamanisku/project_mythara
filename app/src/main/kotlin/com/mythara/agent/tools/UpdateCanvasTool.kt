@@ -47,13 +47,42 @@ class UpdateCanvasTool @Inject constructor(
     override suspend fun execute(args: JsonObject): ToolResult {
         val js = args["js"]?.jsonPrimitive?.contentOrNull()?.trim().orEmpty()
         if (js.isBlank()) return ToolResult.fail("js must be a non-empty JavaScript snippet")
-        // Log the snippet so update_canvas misuses (e.g. trying to
-        // set up a Three.js scene from scratch in update_canvas
-        // instead of inline in render_canvas) are visible in logcat.
+        // Log the snippet so update_canvas misuses are visible in
+        // logcat.
         android.util.Log.d(
             "Mythara/Canvas",
             "update_canvas jsLen=${js.length} preview=${js.take(240).replace('\n', '·')}",
         )
+        // Defensive: detect "setup" patterns that should have been
+        // in render_canvas. update_canvas runs in a different scope
+        // from the initial page load, so calls like
+        // `mythara.three.boot()` / `new THREE.Scene()` /
+        // `new THREE.WebGLRenderer()` would just leak undefined refs
+        // into the global, then the next `scene.add(...)` blows up
+        // with "Cannot read properties of undefined". Catch + redirect.
+        val isSetupAttempt =
+            js.contains("mythara.three.boot") ||
+                js.contains("new THREE.Scene") ||
+                js.contains("new THREE.PerspectiveCamera") ||
+                js.contains("new THREE.WebGLRenderer") ||
+                js.contains("scene = ") || js.contains("scene=") ||
+                js.contains("renderer = ") || js.contains("renderer=")
+        if (isSetupAttempt) {
+            android.util.Log.w(
+                "Mythara/Canvas",
+                "update_canvas REFUSED: snippet looks like scene setup. Put it in render_canvas instead.",
+            )
+            return ToolResult.fail(
+                "setup_in_update_canvas: this snippet looks like Three.js scene setup " +
+                    "(boot / new Scene / new WebGLRenderer / scene assignment). update_canvas " +
+                    "runs in a different JS scope from the initial page load — the scene/" +
+                    "camera/renderer never reach your snippet. " +
+                    "FIX: call render_canvas(template='webgl', html='...') with the WHOLE setup " +
+                    "(host div + <script> that calls mythara.three.boot + scene.add + " +
+                    "renderer.setAnimationLoop) in ONE call. Use update_canvas only for " +
+                    "incremental tweaks AFTER the scene exists (e.g. mesh.material.color.set(...)).",
+            )
+        }
         controller.updateJs(js)
         return ToolResult.ok("queued ${js.length}-char js snippet")
     }
