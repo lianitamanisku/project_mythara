@@ -190,31 +190,34 @@ class TermuxExecTool @Inject constructor(
         val truncatedOut = if (stdout.length > MAX_OUT) stdout.take(MAX_OUT) + "\n…[truncated]" else stdout
         val truncatedErr = if (stderr.length > MAX_OUT) stderr.take(MAX_OUT) + "\n…[truncated]" else stderr
 
-        // Three distinct failure modes the agent + verify UI need to
-        // tell apart:
+        // Classify based on what Termux actually filled in:
         //
-        //   1. Bridge error: Termux rejected the request before it
-        //      ran the command (bad path, allow-external-apps not
-        //      set, …). `err` is non-zero and `errmsg` describes it.
-        //   2. Empty result: the result Bundle came back but has
-        //      neither stdout/stderr nor an exit code — Termux sent
-        //      us a hollow reply, which happens with old or stripped
-        //      builds. Surface this so we don't lie that "exitCode
-        //      was -1".
-        //   3. Success: stdout / stderr / exitCode are all present
-        //      and meaningful.
-        val emptyResult = exitCode == Int.MIN_VALUE && stdout.isEmpty() && stderr.isEmpty()
+        //   Success — exitCode is a real value (not the sentinel).
+        //   That means the binary ran and returned. The auxiliary
+        //   `err` field is Termux-internal bookkeeping that defaults
+        //   to -1 in some build paths even on success, so it CANNOT
+        //   gate success. Real shell exits (zero or non-zero) are
+        //   data the agent reasons about; we surface them as-is.
+        //
+        //   Bridge error — exitCode was NEVER set AND err != 0 AND
+        //   errmsg is non-empty. That's Termux telling us "I never
+        //   ran your command and here's why".
+        //
+        //   Empty result — exitCode missing and no other info either.
+        //   Almost always allow-external-apps=true missing.
+        val exitCodeSet = exitCode != Int.MIN_VALUE
+        val hasErr = err != 0 && errmsg.isNotBlank()
         return when {
-            err != 0 -> ToolResult.ok(
+            exitCodeSet -> ToolResult.ok(
+                """{"status":"ok","exitCode":$exitCode,"stdout":${jsonString(truncatedOut)},""" +
+                    """"stderr":${jsonString(truncatedErr)}}""",
+            )
+            hasErr -> ToolResult.ok(
                 """{"status":"bridge_error","err":$err,"errmsg":${jsonString(errmsg)},""" +
                     """"hint":"Termux rejected the request — most common cause is allow-external-apps=true missing from ~/.termux/termux.properties"}""",
             )
-            emptyResult -> ToolResult.ok(
-                """{"status":"empty_result","hint":"Termux returned a result with no stdout, stderr, or exit code. Check that allow-external-apps=true is set in ~/.termux/termux.properties and that you ran termux-reload-settings.","errmsg":${jsonString(errmsg)}}""",
-            )
             else -> ToolResult.ok(
-                """{"status":"ok","exitCode":$exitCode,"stdout":${jsonString(truncatedOut)},""" +
-                    """"stderr":${jsonString(truncatedErr)}}""",
+                """{"status":"empty_result","hint":"Termux returned a result with no stdout, stderr, or exit code. Check that allow-external-apps=true is set in ~/.termux/termux.properties and that you ran termux-reload-settings.","errmsg":${jsonString(errmsg)}}""",
             )
         }
     }
