@@ -24,8 +24,11 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.ComposeView
 import androidx.compose.ui.platform.ViewCompositionStrategy
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.LifecycleRegistry
+import androidx.lifecycle.ProcessLifecycleOwner
 import androidx.lifecycle.setViewTreeLifecycleOwner
 import androidx.savedstate.SavedStateRegistry
 import androidx.savedstate.SavedStateRegistryController
@@ -86,6 +89,28 @@ class LockscreenIslandService : Service() {
     private var windowManager: WindowManager? = null
     private var overlayView: View? = null
 
+    /** Observes the PROCESS lifecycle so the overlay only shows when
+     *  Mythara itself is NOT in the foreground. The island's whole
+     *  purpose is to surface insights over the lock screen + OTHER
+     *  apps; over Mythara it's redundant AND harmful — its top-centre
+     *  hit rect eats taps on the app's own top-of-screen elements
+     *  (the user's "can't tap things near the island" bug). So:
+     *    app foreground (≥ STARTED) → removeOverlay()
+     *    app background             → ensureOverlay() */
+    private val foregroundObserver = LifecycleEventObserver { _, event ->
+        when (event) {
+            Lifecycle.Event.ON_START -> {
+                Log.d(TAG, "app foregrounded → hiding overlay")
+                removeOverlay()
+            }
+            Lifecycle.Event.ON_STOP -> {
+                Log.d(TAG, "app backgrounded → showing overlay")
+                ensureOverlay()
+            }
+            else -> {}
+        }
+    }
+
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onCreate() {
@@ -103,12 +128,23 @@ class LockscreenIslandService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         startInForeground()
-        ensureOverlay()
+        // Register the process-lifecycle observer ONCE (idempotent —
+        // observers dedupe). It immediately drives the correct initial
+        // state: if the app is already foreground, the overlay stays
+        // hidden; if backgrounded, it shows. addObserver delivers the
+        // current state synchronously so we don't need a manual
+        // ensureOverlay() here.
+        ProcessLifecycleOwner.get().lifecycle.addObserver(foregroundObserver)
+        if (!isAppForegrounded()) ensureOverlay()
         return START_STICKY
     }
 
+    private fun isAppForegrounded(): Boolean =
+        ProcessLifecycleOwner.get().lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)
+
     override fun onDestroy() {
         super.onDestroy()
+        runCatching { ProcessLifecycleOwner.get().lifecycle.removeObserver(foregroundObserver) }
         removeOverlay()
         // ComposeOwner is process-wide (singleton object) and may
         // be reused if the service restarts. We deliberately don't
