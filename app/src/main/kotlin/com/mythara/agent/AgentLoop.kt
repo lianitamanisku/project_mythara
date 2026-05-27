@@ -725,16 +725,18 @@ class AgentLoop @Inject constructor(
 
             val req = ChatRequest(
                 model = snap.model,
-                messages = prior,
+                messages = normalizeForWire(prior),
                 tools = registry.apiSchema().takeIf { it.isNotEmpty() },
                 toolChoice = if (registry.apiSchema().isNotEmpty()) "auto" else null,
                 stream = true,
-                // MiniMax M2.7 is a reasoning model; without reasoning_split=false
-                // it emits thinking tokens through a side channel
-                // (delta.reasoning_details) that the SSE parser doesn't surface
-                // and the tool-use loop can't round-trip. Keep reasoning baked
-                // into `content` so history replay works verbatim.
-                reasoningSplit = false,
+                // reasoning_split intentionally OMITTED (null → dropped on
+                // the wire). MiniMax-M2.7 now rejects it with
+                // "invalid chat setting (2013)" — the field that worked on
+                // M2 was deprecated/changed for M2.7. The model's DEFAULT
+                // already bakes reasoning into `content` (we render + strip
+                // <think> blocks via Thinks/ThinkingIndicator), so dropping
+                // the flag keeps the tool-use round-trip working.
+                reasoningSplit = null,
             )
 
             val streamedText = StringBuilder()
@@ -913,6 +915,60 @@ class AgentLoop @Inject constructor(
      * tool_call must have exactly one matching tool result, immediately
      * following the assistant turn (with no user/system interleaved).
      */
+    /**
+     * Normalise the full message list into a shape MiniMax accepts.
+     * MiniMax-M2.7 returns "invalid params, invalid chat setting (2013)"
+     * when the request has (a) multiple stacked system messages, or
+     * (b) non-alternating roles — e.g. several consecutive `user`
+     * messages, which accumulate fast once a turn starts failing (the
+     * user message is persisted but no assistant reply is, so retries
+     * pile up orphan user rows and wedge every subsequent request).
+     *
+     * Two passes:
+     *   1. Merge ALL leading system messages into ONE (joined with
+     *      blank lines). We inject up to ~14 separate system blocks
+     *      (name, time, persona, mood, recall, …); MiniMax wants one.
+     *   2. Collapse consecutive same-role plain messages so the body
+     *      strictly alternates. `user`+`user` → one user; plain
+     *      `assistant`+`assistant` (neither carrying tool_calls) → one.
+     *      Assistant-with-tool_calls and `tool` messages are left
+     *      untouched so the tool-call/result pairing (already repaired
+     *      by [sanitizeHistory]) stays intact.
+     */
+    private fun normalizeForWire(messages: List<ChatMessage>): List<ChatMessage> {
+        if (messages.isEmpty()) return messages
+        val out = mutableListOf<ChatMessage>()
+        // Pass 1 — merge the leading system block into one.
+        val systemBlock = messages.takeWhile { it.role == "system" }
+        val rest = messages.drop(systemBlock.size)
+        if (systemBlock.isNotEmpty()) {
+            out += ChatMessage(
+                role = "system",
+                content = systemBlock.mapNotNull { it.content?.takeIf { c -> c.isNotBlank() } }
+                    .joinToString("\n\n"),
+            )
+        }
+        // Pass 2 — collapse consecutive same-role plain messages.
+        for (msg in rest) {
+            val last = out.lastOrNull()
+            val canMerge = last != null &&
+                last.role == msg.role &&
+                last.toolCallId == null && msg.toolCallId == null &&
+                last.toolCalls.isNullOrEmpty() && msg.toolCalls.isNullOrEmpty() &&
+                (msg.role == "user" || msg.role == "assistant")
+            if (canMerge) {
+                val merged = listOfNotNull(
+                    last!!.content?.takeIf { it.isNotBlank() },
+                    msg.content?.takeIf { it.isNotBlank() },
+                ).joinToString("\n\n").ifEmpty { null }
+                out[out.lastIndex] = last.copy(content = merged)
+            } else {
+                out += msg
+            }
+        }
+        return out
+    }
+
     private fun sanitizeHistory(history: List<ChatMessage>): List<ChatMessage> {
         if (history.isEmpty()) return history
 
@@ -1057,11 +1113,13 @@ class AgentLoop @Inject constructor(
 
             val req = ChatRequest(
                 model = snap.model,
-                messages = messages.toList(),
+                messages = normalizeForWire(messages.toList()),
                 tools = registry.apiSchema().takeIf { it.isNotEmpty() },
                 toolChoice = if (registry.apiSchema().isNotEmpty()) "auto" else null,
                 stream = true,
-                reasoningSplit = false,
+                // Omitted — see main-loop note: M2.7 rejects reasoning_split
+                // with "invalid chat setting (2013)".
+                reasoningSplit = null,
             )
 
             val streamedText = StringBuilder()

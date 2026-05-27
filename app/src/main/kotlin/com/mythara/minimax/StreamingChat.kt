@@ -134,7 +134,18 @@ class StreamingChat(private val client: MiniMaxClient) {
                 // is the request WE sent, not user secrets (the API key
                 // is a header, not in the body).
                 if (status in 400..499) {
-                    Log.e(TAG, "4xx request body (first 2KB): ${bodyJson.take(2048)}")
+                    // Concise structural snapshot so any future malformed-
+                    // payload bug is diagnosable from logcat without
+                    // guessing: total bytes + role histogram + how many
+                    // system messages lead (should be 1 after
+                    // AgentLoop.normalizeForWire) + tool count.
+                    val roleCounts = request.messages.groupingBy { it.role }.eachCount()
+                    val leadingSystem = request.messages.takeWhile { it.role == "system" }.size
+                    Log.e(
+                        TAG,
+                        "4xx body=${bodyJson.length}B roles=$roleCounts leadingSystem=$leadingSystem " +
+                            "tools=${request.tools?.size ?: 0}",
+                    )
                 }
                 val mapped = ErrorMapper.fromHttp(status, errBody)
                 trySend(StreamEvent.Failure(mapped))
