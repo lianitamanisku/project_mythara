@@ -48,12 +48,21 @@ fun DashboardTileFrame(
     modifier: Modifier = Modifier,
     content: @Composable () -> Unit,
 ) {
+    // Skin-aware surface: solid on Spatial (as before); translucent on
+    // Aurora Glass so the aurora backdrop glows through the tiles.
+    val spec = com.mythara.ui.theme.LocalSkinSpec.current
+    val shape = RoundedCornerShape(spec.cornerRadius)
+    val fill = when (spec.surfaceTreatment) {
+        com.mythara.ui.theme.SurfaceTreatment.Translucent -> MytharaColors.Surface.copy(alpha = 0.42f)
+        com.mythara.ui.theme.SurfaceTreatment.LineArt -> MytharaColors.Bg.copy(alpha = 0.35f)
+        com.mythara.ui.theme.SurfaceTreatment.Solid -> MytharaColors.Surface
+    }
     Column(
         modifier = modifier
             .fillMaxSize()
-            .clip(RoundedCornerShape(12.dp))
-            .background(MytharaColors.Surface)
-            .border(1.dp, accent, RoundedCornerShape(12.dp))
+            .clip(shape)
+            .background(fill)
+            .border(1.dp, accent, shape)
             .clickable(onClick = onTap)
             .padding(12.dp),
     ) {

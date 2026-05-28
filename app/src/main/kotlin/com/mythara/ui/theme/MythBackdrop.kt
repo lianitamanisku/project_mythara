@@ -27,7 +27,7 @@ fun MythBackdrop(
     Box(modifier = modifier.fillMaxSize().background(palette.Bg)) {
         when (spec.backdrop) {
             Backdrop.Plain -> Unit // solid base — Spatial
-            Backdrop.Aurora -> Unit // P6: animated charple→bok aurora gradient
+            Backdrop.Aurora -> AuroraBackdrop(palette = palette) // P6
             Backdrop.Rose -> Unit   // P7: RoseGeometry particle field, HR-driven breath
             Backdrop.Hud -> Unit    // P8: concentric line-art rings + reticles
         }

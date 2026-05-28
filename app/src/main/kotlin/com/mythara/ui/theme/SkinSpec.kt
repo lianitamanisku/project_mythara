@@ -53,12 +53,26 @@ object SkinCatalog {
         elevation = 2.dp,
     )
 
-    // Aurora / Rose / HUD specs land in Phases 6–8. Until then they
-    // resolve to Spatial so the picker is wired but the visual swap
-    // ships incrementally.
+    /** Aurora Glass — frosted translucent cards floating over a slow
+     *  charple→bok aurora gradient. Softer corners, blur, translucent
+     *  surfaces. */
+    val Aurora = SkinSpec(
+        id = SkinId.AuroraGlass,
+        cornerRadius = 22.dp,
+        hairlineWidth = 1.dp,
+        blurRadius = 28.dp,
+        surfaceTreatment = SurfaceTreatment.Translucent,
+        backdrop = Backdrop.Aurora,
+        accentIntensity = 1.0f,
+        elevation = 0.dp,
+    )
+
+    // Rose / HUD specs land in Phases 7–8. Until then they resolve to
+    // Spatial so the picker is wired but the visual swap ships
+    // incrementally.
     fun forSkin(id: SkinId): SkinSpec = when (id) {
         SkinId.SpatialCards -> Spatial
-        SkinId.AuroraGlass -> Spatial
+        SkinId.AuroraGlass -> Aurora
         SkinId.LivingRose -> Spatial
         SkinId.HolographicHud -> Spatial
     }
