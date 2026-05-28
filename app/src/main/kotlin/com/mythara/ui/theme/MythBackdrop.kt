@@ -28,8 +28,8 @@ fun MythBackdrop(
         when (spec.backdrop) {
             Backdrop.Plain -> Unit // solid base — Spatial
             Backdrop.Aurora -> AuroraBackdrop(palette = palette) // P6
-            Backdrop.Rose -> Unit   // P7: RoseGeometry particle field, HR-driven breath
-            Backdrop.Hud -> Unit    // P8: concentric line-art rings + reticles
+            Backdrop.Rose -> RoseBackdrop(palette = palette) // P7: HR-driven breathing rose
+            Backdrop.Hud -> HudBackdrop(palette = palette) // P8: concentric rings + radar sweep
         }
     }
 }

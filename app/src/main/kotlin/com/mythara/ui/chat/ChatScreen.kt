@@ -815,6 +815,12 @@ private fun TextBubble(
     onReplayMusic: () -> Unit = {},
     onReinforce: (Boolean) -> Unit = {},
 ) {
+    // Terminal mode — opt-in monospace green-on-dark log lines instead
+    // of the themed card bubbles. Same message tree, swapped look.
+    if (com.mythara.ui.theme.LocalUiMode.current == com.mythara.data.UiMode.Terminal) {
+        TerminalLine(text = text, kind = kind, musicMode = musicMode, onReplayMusic = onReplayMusic)
+        return
+    }
     val isUser = kind == ChatViewModel.TextKind.User || kind == ChatViewModel.TextKind.Notification
     val accent = when (kind) {
         ChatViewModel.TextKind.User -> MytharaColors.Charple
@@ -932,6 +938,66 @@ private fun produceMusicAnnotated(text: String, defaultColor: androidx.compose.u
         value = vm.composeMusicAnnotated(text, defaultColor.toArgb(), highlightMotifIndex = highlight)
     }
     return state.value
+}
+
+/**
+ * Terminal-mode rendering of a chat line — monospace, green-on-dark,
+ * glyph-prefixed, full-width. Each line paints its own near-black
+ * strip so the green stays legible regardless of the active skin's
+ * base colour (terminal mode is its own aesthetic, not skin-tinted).
+ */
+@Composable
+private fun TerminalLine(
+    text: String,
+    kind: ChatViewModel.TextKind,
+    musicMode: Boolean = false,
+    onReplayMusic: () -> Unit = {},
+) {
+    val displayText = if (kind == ChatViewModel.TextKind.Notification) {
+        text.removePrefix(com.mythara.agent.AgentLoop.NOTIF_PREFIX).trim()
+    } else text
+    val prefix: String
+    val color: androidx.compose.ui.graphics.Color
+    when (kind) {
+        ChatViewModel.TextKind.User -> { prefix = "❯ you "; color = androidx.compose.ui.graphics.Color(0xFF9CFFB8) }
+        ChatViewModel.TextKind.Reply -> { prefix = "❯ mythara "; color = androidx.compose.ui.graphics.Color(0xFF36F1CD) }
+        ChatViewModel.TextKind.Notification -> { prefix = "» notif "; color = androidx.compose.ui.graphics.Color(0xFFFFC24B) }
+        ChatViewModel.TextKind.Update -> { prefix = "» upd "; color = androidx.compose.ui.graphics.Color(0xFF6FB4FF) }
+    }
+    val line = androidx.compose.ui.text.buildAnnotatedString {
+        pushStyle(androidx.compose.ui.text.SpanStyle(color = color.copy(alpha = 0.55f)))
+        append(prefix)
+        pop()
+        pushStyle(androidx.compose.ui.text.SpanStyle(color = color))
+        append(displayText)
+        pop()
+    }
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(androidx.compose.ui.graphics.Color(0xF00A0E0B))
+            .padding(horizontal = 12.dp, vertical = 5.dp),
+    ) {
+        Column(modifier = Modifier.fillMaxWidth()) {
+            Text(
+                text = line,
+                style = MaterialTheme.typography.bodySmall.copy(
+                    fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
+                ),
+            )
+            if (musicMode && kind != ChatViewModel.TextKind.User) {
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    text = "  ▶ replay tones",
+                    color = androidx.compose.ui.graphics.Color(0xFF36F1CD).copy(alpha = 0.8f),
+                    style = MaterialTheme.typography.labelSmall.copy(
+                        fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
+                    ),
+                    modifier = Modifier.clickable { onReplayMusic() },
+                )
+            }
+        }
+    }
 }
 
 @Composable

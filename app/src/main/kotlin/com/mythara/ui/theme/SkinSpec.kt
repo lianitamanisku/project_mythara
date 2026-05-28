@@ -67,13 +67,38 @@ object SkinCatalog {
         elevation = 0.dp,
     )
 
-    // Rose / HUD specs land in Phases 7–8. Until then they resolve to
-    // Spatial so the picker is wired but the visual swap ships
-    // incrementally.
+    /** Living Rose — translucent cards floating over a large, slowly
+     *  rotating geometric rose whose cyan nucleus breathes with the
+     *  user's live heart rate. Rounded, soft, organic. */
+    val LivingRose = SkinSpec(
+        id = SkinId.LivingRose,
+        cornerRadius = 20.dp,
+        hairlineWidth = 1.dp,
+        blurRadius = 0.dp,
+        surfaceTreatment = SurfaceTreatment.Translucent,
+        backdrop = Backdrop.Rose,
+        accentIntensity = 1.0f,
+        elevation = 0.dp,
+    )
+
+    /** Holographic HUD — line-art panels (no solid fill) over a
+     *  concentric-ring / reticle backdrop. Sharp corners + hairlines
+     *  for a cockpit-glass, instrument-readout feel. */
+    val HolographicHud = SkinSpec(
+        id = SkinId.HolographicHud,
+        cornerRadius = 6.dp,
+        hairlineWidth = 1.dp,
+        blurRadius = 0.dp,
+        surfaceTreatment = SurfaceTreatment.LineArt,
+        backdrop = Backdrop.Hud,
+        accentIntensity = 1.0f,
+        elevation = 0.dp,
+    )
+
     fun forSkin(id: SkinId): SkinSpec = when (id) {
         SkinId.SpatialCards -> Spatial
         SkinId.AuroraGlass -> Aurora
-        SkinId.LivingRose -> Spatial
-        SkinId.HolographicHud -> Spatial
+        SkinId.LivingRose -> LivingRose
+        SkinId.HolographicHud -> HolographicHud
     }
 }

@@ -25,6 +25,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.mythara.data.BrightnessMode
 import com.mythara.data.ThemeStore
+import com.mythara.data.UiMode
 import com.mythara.ui.theme.Glyph
 import com.mythara.ui.theme.MytharaColors
 import com.mythara.ui.theme.SkinId
@@ -47,12 +48,20 @@ class AppearancePanelViewModel @Inject constructor(
         themeStore.skinFlow()
             .stateIn(viewModelScope, SharingStarted.Eagerly, SkinId.SpatialCards)
 
+    val uiMode: StateFlow<UiMode> =
+        themeStore.uiModeFlow()
+            .stateIn(viewModelScope, SharingStarted.Eagerly, UiMode.Beautiful)
+
     fun setBrightness(mode: BrightnessMode) {
         viewModelScope.launch { themeStore.setBrightnessMode(mode) }
     }
 
     fun setSkin(id: SkinId) {
         viewModelScope.launch { themeStore.setSkin(id) }
+    }
+
+    fun setUiMode(mode: UiMode) {
+        viewModelScope.launch { themeStore.setUiMode(mode) }
     }
 }
 
@@ -66,6 +75,7 @@ class AppearancePanelViewModel @Inject constructor(
 fun AppearancePanel(vm: AppearancePanelViewModel = hiltViewModel()) {
     val mode by vm.brightnessMode.collectAsState()
     val skin by vm.skin.collectAsState()
+    val uiMode by vm.uiMode.collectAsState()
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -101,8 +111,8 @@ fun AppearancePanel(vm: AppearancePanelViewModel = hiltViewModel()) {
         // ─── Skin ───
         Spacer(Modifier.height(14.dp))
         Text(
-            text = "${Glyph.AccentBar} skin — the visual language. Spatial is live now; " +
-                "Aurora Glass, Living Rose + Holographic HUD light up in upcoming builds.",
+            text = "${Glyph.AccentBar} skin — the visual language. Each is its own palette + " +
+                "backdrop: Spatial (flat), Aurora Glass, Living Rose (HR-breathing), Holographic HUD.",
             color = MytharaColors.FgDim,
             style = MaterialTheme.typography.bodySmall,
         )
@@ -115,6 +125,20 @@ fun AppearancePanel(vm: AppearancePanelViewModel = hiltViewModel()) {
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             SkinChip("living rose", skin == SkinId.LivingRose) { vm.setSkin(SkinId.LivingRose) }
             SkinChip("hud", skin == SkinId.HolographicHud) { vm.setSkin(SkinId.HolographicHud) }
+        }
+
+        // ─── Chat UI mode ───
+        Spacer(Modifier.height(14.dp))
+        Text(
+            text = "${Glyph.AccentBar} chat style — 'beautiful' card bubbles (default) or a " +
+                "'terminal' monospace green-on-dark log.",
+            color = MytharaColors.FgDim,
+            style = MaterialTheme.typography.bodySmall,
+        )
+        Spacer(Modifier.height(8.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            SkinChip("beautiful", uiMode == UiMode.Beautiful) { vm.setUiMode(UiMode.Beautiful) }
+            SkinChip("terminal", uiMode == UiMode.Terminal) { vm.setUiMode(UiMode.Terminal) }
         }
     }
 }

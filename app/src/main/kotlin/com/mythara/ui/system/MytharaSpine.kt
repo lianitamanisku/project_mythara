@@ -91,6 +91,7 @@ fun MytharaSpine(
     onOpenUsage: () -> Unit = {},
     onOpenSettings: () -> Unit = {},
     onOpenTriage: () -> Unit = {},
+    onOpenAlerts: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     var expanded by remember { mutableStateOf(false) }
@@ -191,6 +192,7 @@ fun MytharaSpine(
                 onOpenUsage = { expanded = false; onOpenUsage() },
                 onOpenSettings = { expanded = false; onOpenSettings() },
                 onOpenTriage = { expanded = false; onOpenTriage() },
+                onOpenAlerts = { expanded = false; onOpenAlerts() },
             )
         }
 
@@ -219,6 +221,7 @@ private fun LauncherPanel(
     onOpenUsage: () -> Unit,
     onOpenSettings: () -> Unit,
     onOpenTriage: () -> Unit,
+    onOpenAlerts: () -> Unit,
 ) {
     Box(
         modifier = Modifier
@@ -253,6 +256,7 @@ private fun LauncherPanel(
             LauncherEntry("people", "●", onOpenPeople)
             LauncherEntry("memory", "┃", onOpenMemory)
             LauncherEntry("tasks", "✓", onOpenTasks)
+            LauncherEntry("alerts", "◆", onOpenAlerts)
             LauncherEntry("usage", "◇", onOpenUsage)
             LauncherEntry("settings", "◆", onOpenSettings)
             LauncherEntry("triage", "✓", onOpenTriage)

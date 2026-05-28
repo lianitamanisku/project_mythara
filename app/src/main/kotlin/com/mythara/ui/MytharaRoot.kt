@@ -3,6 +3,7 @@ package com.mythara.ui
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.runtime.Composable
@@ -14,6 +15,12 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.layout.boundsInRoot
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.unit.dp
+import androidx.navigation.compose.currentBackStackEntryAsState
+import com.mythara.ui.amulet.RoseAmulet
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
@@ -237,6 +244,20 @@ fun MytharaRoot(
                     var preBloomPos by remember {
                         mutableStateOf<androidx.compose.ui.geometry.Offset?>(null)
                     }
+                    // v6 — persistent bottom-centre rose amulet. Its
+                    // measured centre (root coords) drives where the
+                    // long-press PopupAmulet blooms from.
+                    var roseCenterPx by remember {
+                        mutableStateOf<androidx.compose.ui.geometry.Offset?>(null)
+                    }
+                    // v7 — radius (px) around the rose's centre within
+                    // which a global long-press is suppressed, so
+                    // holding the rose arms PTT instead of opening the
+                    // PopupAmulet. Generous (covers the 64 dp target +
+                    // a margin).
+                    val rosePttRadiusPx = with(androidx.compose.ui.platform.LocalDensity.current) {
+                        72.dp.toPx()
+                    }
                     // Spotlight drawer overlay — pull-down sheet
                     // surfaced from a constellation chip. State
                     // lives at the root so it can render above
@@ -257,9 +278,25 @@ fun MytharaRoot(
                         modifier = Modifier
                             .fillMaxSize()
                             .detectGlobalLongPress(
-                                onPreBloom = { pos -> preBloomPos = pos },
+                                onPreBloom = { pos ->
+                                    // Suppress the pre-bloom ring on the
+                                    // rose — that hold is arming PTT.
+                                    val rc = roseCenterPx
+                                    if (rc == null || (pos - rc).getDistance() > rosePttRadiusPx) {
+                                        preBloomPos = pos
+                                    }
+                                },
                                 onPreBloomCancelled = { preBloomPos = null },
-                                onLongPress = { pos -> amuletAnchor = pos },
+                                onLongPress = { pos ->
+                                    // Off-rose long-press opens the
+                                    // PopupAmulet; a long-press ON the
+                                    // rose is reserved for the 3 s PTT
+                                    // hold and must NOT open the amulet.
+                                    val rc = roseCenterPx
+                                    if (rc == null || (pos - rc).getDistance() > rosePttRadiusPx) {
+                                        amuletAnchor = pos
+                                    }
+                                },
                             ),
                     ) {
                     if (isCompact) {
@@ -477,6 +514,19 @@ fun MytharaRoot(
                                     NotificationTriageScreen(onBack = { nav.popBackStack() })
                                 }
                             }
+                            composable(Routes.NotifHub) {
+                                com.mythara.ui.scaffold.MytharaScaffold(
+                                    title = "alerts",
+                                    glyph = com.mythara.ui.theme.Glyph.DiamondFilled,
+                                    onBack = { nav.popBackStack() },
+                                ) {
+                                    com.mythara.ui.notifications.NotificationHubScreen(
+                                        onAskNavigateChat = {
+                                            nav.navigate(Routes.Chat) { launchSingleTop = true }
+                                        },
+                                    )
+                                }
+                            }
                             composable(Routes.Usage) {
                                 com.mythara.ui.scaffold.MytharaScaffold(
                                     title = "usage",
@@ -669,6 +719,22 @@ fun MytharaRoot(
                             ).voiceActions()
                         } }
 
+                    // v7 — app-wide PTT controller (hold rose → talk →
+                    // release → send). Resolved here so the gesture
+                    // works on any screen, not just Chat.
+                    val pttController: com.mythara.voice.PttController =
+                        remember {
+                            dagger.hilt.android.EntryPointAccessors.fromApplication(
+                                ctx.applicationContext,
+                                MytharaRootEntryPoint::class.java,
+                            ).pttController()
+                        }
+                    // RECORD_AUDIO request — armed the first time the
+                    // user holds the rose without the permission.
+                    val micPermLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
+                        androidx.activity.result.contract.ActivityResultContracts.RequestPermission(),
+                    ) { granted -> if (granted) pttController.start() }
+
                     // Pre-amulet particle ring — renders under the
                     // touch point from 300 ms in, fades into a one-
                     // frame cyan flash when the amulet commits at
@@ -720,6 +786,76 @@ fun MytharaRoot(
                         )
                     }
 
+                    // v6 — persistent bottom-centre rose amulet.
+                    // Mythara's brand mark + universal nav hub, mounted
+                    // ONCE here so it floats over every NavHost
+                    // destination (the screens themselves render no
+                    // rose). Hidden on Home — the hub already shows a
+                    // large hero rose, so a second one would be
+                    // redundant. Its measured centre (root coords) is
+                    // captured into roseCenterPx so a long-press blooms
+                    // the PopupAmulet out of the rose itself rather than
+                    // from the raw touch point.
+                    //
+                    //   tap            → Chat
+                    //   hold ≥ 3 s     → PTT (talk; release to send)
+                    //   swipe up       → PopupAmulet (from rose centre)
+                    //   swipe ← / →    → step between primary screens
+                    val amuletBackEntry by nav.currentBackStackEntryAsState()
+                    val amuletRoute = amuletBackEntry?.destination?.route
+                    // v7 — the rose floats on Home now (it's the PTT
+                    // button + brand centerpiece below the face mesh).
+                    // Still hidden on Chat, where the bottom-centre
+                    // composer owns that band.
+                    if (amuletRoute != Routes.Chat) {
+                        RoseAmulet(
+                            modifier = Modifier
+                                .align(Alignment.BottomCenter)
+                                .navigationBarsPadding()
+                                .padding(bottom = 10.dp)
+                                .size(64.dp)
+                                .onGloballyPositioned { coords ->
+                                    roseCenterPx = coords.boundsInRoot().center
+                                },
+                            sizeDp = 64.dp,
+                            onTap = {
+                                // Short tap = talk to Mythara (Chat).
+                                nav.navigate(Routes.Chat) { launchSingleTop = true }
+                            },
+                            // No-op: holding the rose arms PTT, NOT the
+                            // PopupAmulet (the 500 ms long-press would
+                            // otherwise pre-empt the 3 s PTT hold). The
+                            // amulet opens via swipe-up on the rose, or a
+                            // long-press anywhere off the rose.
+                            onLongPress = {},
+                            onSwipeUp = {
+                                amuletAnchor = roseCenterPx
+                            },
+                            onSwipeLeft = {
+                                stepPrimary(amuletRoute, forward = true)?.let {
+                                    nav.navigate(it) { launchSingleTop = true }
+                                }
+                            },
+                            onSwipeRight = {
+                                stepPrimary(amuletRoute, forward = false)?.let {
+                                    nav.navigate(it) { launchSingleTop = true }
+                                }
+                            },
+                            onPttHoldChange = { holding, _ ->
+                                // Hold ≥ 3 s arms PTT; release sends.
+                                if (holding) {
+                                    if (pttController.micPermissionGranted()) {
+                                        pttController.start()
+                                    } else {
+                                        micPermLauncher.launch(android.Manifest.permission.RECORD_AUDIO)
+                                    }
+                                } else {
+                                    pttController.stop()
+                                }
+                            },
+                        )
+                    }
+
                     // Phase E.1 — MytharaSpine on the right edge.
                     // Z-ordered above the NavHost + amulet so the
                     // launcher panel slides over whatever's behind
@@ -741,6 +877,7 @@ fun MytharaRoot(
                         onOpenUsage = { nav.navigate(Routes.Usage) { launchSingleTop = true } },
                         onOpenSettings = { nav.navigate(Routes.Settings) { launchSingleTop = true } },
                         onOpenTriage = { nav.navigate(Routes.Triage) { launchSingleTop = true } },
+                        onOpenAlerts = { nav.navigate(Routes.NotifHub) { launchSingleTop = true } },
                     )
 
                     } // end inner Box (layout + overlays)
@@ -888,6 +1025,9 @@ object Routes {
     const val Tasks = "tasks"
     /** Notification triage — see auto-dismissed, mark important. */
     const val Triage = "triage"
+    /** In-app notification hub — live phone notifications, grouped,
+     *  with dismiss / mark-important / ask-Mythara, plus a triaged tab. */
+    const val NotifHub = "notif-hub"
     /** MiniMax API usage / quota dashboard. */
     const val Usage = "usage"
     /** Dashboard / command center — surfaced from the amulet as a
@@ -925,6 +1065,9 @@ interface MytharaRootEntryPoint {
      *  PTT-as-Rose press can fire VoiceActionStore.Source.RosePress
      *  without going through a ViewModel constructor. */
     fun voiceActions(): com.mythara.voice.VoiceActionStore
+    /** v7 — app-wide push-to-talk for the hold-rose-to-talk gesture,
+     *  resolved without a ViewModel so it works on any screen. */
+    fun pttController(): com.mythara.voice.PttController
     /** UI Overhaul Phase E — first-launch amulet coach mark
      *  reads + writes the "seen" flag here so the hint only
      *  renders once per fresh install / onboarding reset. */

@@ -51,6 +51,7 @@ import kotlin.math.PI
 import kotlin.math.abs
 import kotlin.math.cos
 import kotlin.math.hypot
+import kotlin.math.ln
 import kotlin.math.sin
 import kotlin.math.sqrt
 import kotlin.random.Random
@@ -124,7 +125,6 @@ private val EYE_GLOW = Color(0xFFE4FBFF)   // near-white cyan — the eye cores
 fun FaceScreen(onBack: () -> Unit, vm: FaceViewModel = hiltViewModel()) {
     val speaking by vm.speaking.collectAsState()
     val pose by vm.pose.collectAsState()
-    val model = remember { buildFaceModel() }
     val ctx = LocalContext.current
 
     // Front-camera permission — needed to track the user's face.
@@ -146,89 +146,12 @@ fun FaceScreen(onBack: () -> Unit, vm: FaceViewModel = hiltViewModel()) {
         onDispose { vm.unbindCamera() }
     }
 
-    val infinite = rememberInfiniteTransition(label = "face")
-    // Idle motion — used only when the camera isn't tracking a face.
-    val sway by infinite.animateFloat(
-        initialValue = -1f,
-        targetValue = 1f,
-        animationSpec = infiniteRepeatable(tween(5200, easing = LinearEasing), RepeatMode.Reverse),
-        label = "sway",
-    )
-    val bob by infinite.animateFloat(
-        initialValue = -1f,
-        targetValue = 1f,
-        animationSpec = infiniteRepeatable(tween(3100, easing = LinearEasing), RepeatMode.Reverse),
-        label = "bob",
-    )
-    // Soft brightness shimmer across the whole cloud.
-    val shimmer by infinite.animateFloat(
-        initialValue = 0f,
-        targetValue = (2.0 * PI).toFloat(),
-        animationSpec = infiniteRepeatable(tween(2400, easing = LinearEasing), RepeatMode.Restart),
-        label = "shimmer",
-    )
-    // Fast phase driving the talking mouth — only used while speaking.
-    val mouthPhase by infinite.animateFloat(
-        initialValue = 0f,
-        targetValue = (2.0 * PI).toFloat(),
-        animationSpec = infiniteRepeatable(tween(260, easing = LinearEasing), RepeatMode.Restart),
-        label = "mouth",
-    )
-    // Idle self-driven blink — only used when not camera-tracking.
-    val idleBlink = remember { Animatable(1f) }
-    LaunchedEffect(Unit) {
-        while (true) {
-            delay(Random.nextLong(2400L, 5600L))
-            idleBlink.animateTo(0.06f, tween(85))
-            idleBlink.animateTo(1f, tween(150))
-        }
-    }
-
-    val mouthOpen = if (speaking) {
-        abs(sin(mouthPhase.toDouble())).toFloat() * 0.85f + 0.15f
-    } else {
-        0.04f
-    }
-
-    // Pose-or-idle targets. When the camera has a face we follow it;
-    // otherwise we drift on the idle animators. animateFloatAsState
-    // smooths the hand-off + any residual ML Kit jitter.
-    val tracking = pose.present
-    val yaw by animateFloatAsState(
-        if (tracking) pose.yaw else sway * 0.16f, tween(110), label = "yaw",
-    )
-    val pitch by animateFloatAsState(
-        if (tracking) pose.pitch else bob * 0.05f, tween(110), label = "pitch",
-    )
-    val roll by animateFloatAsState(
-        if (tracking) pose.roll else 0f, tween(110), label = "roll",
-    )
-    val eyeL by animateFloatAsState(
-        if (tracking) pose.leftEyeOpen else idleBlink.value, tween(90), label = "eyeL",
-    )
-    val eyeR by animateFloatAsState(
-        if (tracking) pose.rightEyeOpen else idleBlink.value, tween(90), label = "eyeR",
-    )
-
     Box(
         modifier = Modifier
             .fillMaxSize()
             .background(Color.Black),
     ) {
-        Canvas(modifier = Modifier.fillMaxSize()) {
-            drawFaceCloud(
-                model = model,
-                yaw = yaw,
-                pitch = pitch,
-                roll = roll,
-                bob = bob,
-                shimmer = shimmer,
-                eyeOpenL = eyeL,
-                eyeOpenR = eyeR,
-                mouthOpen = mouthOpen,
-                speaking = speaking,
-            )
-        }
+        FaceMesh(speaking = speaking, pose = pose, modifier = Modifier.fillMaxSize())
 
         // Phase C — back affordance moved to the MytharaScaffold
         // header sliver at the top; the in-screen "‹ chat" chip is
@@ -236,14 +159,14 @@ fun FaceScreen(onBack: () -> Unit, vm: FaceViewModel = hiltViewModel()) {
 
         val status = when {
             speaking -> "● speaking"
-            tracking -> "● tracking you"
+            pose.present -> "● tracking you"
             hasCam -> "○ looking for you…"
             else -> "○ tap to enable face tracking"
         }
         Text(
             text = status,
             style = MaterialTheme.typography.labelMedium.copy(
-                color = if (speaking || tracking) EYE_GLOW else CLOUD.copy(alpha = 0.55f),
+                color = if (speaking || pose.present) EYE_GLOW else CLOUD.copy(alpha = 0.55f),
             ),
             modifier = Modifier
                 .align(Alignment.BottomCenter)
@@ -253,6 +176,419 @@ fun FaceScreen(onBack: () -> Unit, vm: FaceViewModel = hiltViewModel()) {
                 },
         )
     }
+}
+
+/**
+ * Particle face (v7). A field of glowing particles drifts freely
+ * across the whole canvas. The moment the front camera detects a face
+ * ([pose].present) the particles SNAP toward the centre and assemble
+ * into two eyes + a mouth; lose the face and they scatter back out.
+ * The eyes track the detected face (pupils aim with the head's
+ * yaw/pitch) and blink with the real eye-open signal. The mouth is a
+ * horizontal band of particles that, while Mythara is [speaking],
+ * ripples like an audio waveform with a colour gradient sweeping along
+ * it.
+ *
+ * Transparent canvas — the caller owns the background.
+ */
+@Composable
+fun FaceMesh(
+    speaking: Boolean,
+    pose: FaceTracker.Pose,
+    modifier: Modifier = Modifier,
+) {
+    val particles = remember { buildParticles() }
+
+    // Continuous frame time (seconds) — drives drift + the soundwave.
+    var timeSec by androidx.compose.runtime.remember {
+        androidx.compose.runtime.mutableFloatStateOf(0f)
+    }
+    LaunchedEffect(Unit) {
+        val start = androidx.compose.runtime.withFrameNanos { it }
+        while (true) {
+            androidx.compose.runtime.withFrameNanos { now ->
+                timeSec = (now - start) / 1_000_000_000f
+            }
+        }
+    }
+
+    // Assembly 0 (scattered) → 1 (formed). Springs in on face-detect
+    // so the particles "suddenly" rush to centre with a little life.
+    val assembly by animateFloatAsState(
+        targetValue = if (pose.present) 1f else 0f,
+        animationSpec = androidx.compose.animation.core.spring(
+            dampingRatio = 0.62f,
+            stiffness = 190f,
+        ),
+        label = "assembly",
+    )
+
+    // Idle self-blink when no camera face; real eye-open when tracking.
+    val idleBlink = remember { Animatable(1f) }
+    LaunchedEffect(Unit) {
+        while (true) {
+            delay(Random.nextLong(2600L, 6000L))
+            idleBlink.animateTo(0.08f, tween(80))
+            idleBlink.animateTo(1f, tween(160))
+        }
+    }
+    val tracking = pose.present
+    val eyeOpenL = if (tracking) pose.leftEyeOpen else idleBlink.value
+    val eyeOpenR = if (tracking) pose.rightEyeOpen else idleBlink.value
+    // v7.3 — flowAmount drives the sunburst. 0 (idle) = quiet ring;
+    // 1 (speaking) = particles continuously radiate outward.
+    val flowAmount by animateFloatAsState(
+        targetValue = if (speaking) 1f else 0f,
+        animationSpec = tween(durationMillis = 700),
+        label = "flowAmount",
+    )
+
+    // Theme-adaptive gradient — pull stops from the active skin's
+    // palette so the ring + sunburst always look "right" against the
+    // current backdrop (rose on Living Rose, cyan on HUD, etc).
+    val palette = com.mythara.ui.theme.LocalMythPalette.current
+    val ringStops = remember(palette) {
+        listOf(
+            palette.Charple, palette.Malibu, palette.Bok,
+            palette.Mustard, palette.Sriracha, palette.Charple,
+        )
+    }
+
+    // Gaze — drives the inner sphere's positional offset so it
+    // visibly tracks the user's head movement.
+    val gazeX = pose.yaw.coerceIn(-1f, 1f)
+    val gazeY = pose.pitch.coerceIn(-1f, 1f)
+
+    Canvas(modifier = modifier) {
+        val w = size.width
+        val h = size.height
+        val ease = assembly.coerceIn(0f, 1f)
+        for (p in particles) {
+            // Scatter position — slow Lissajous drift across the screen.
+            val sxN = p.homeX + p.driftAmpX * sin(timeSec * p.driftFreqX + p.driftPhaseX)
+            val syN = p.homeY + p.driftAmpY * cos(timeSec * p.driftFreqY + p.driftPhaseY)
+
+            var txN = sxN
+            var tyN = syN
+            // Default to a theme-driven soft ambient hue (palette
+            // Charple at the muted alpha used below) instead of the
+            // old hardcoded lavender — so the scattered field carries
+            // the active skin's brand colour rather than a fixed one.
+            var color = palette.Charple
+            var coreA: Float
+            // For CIRCLE particles, alpha is further modulated by where
+            // they are in their fly-in cycle (fades in as they approach
+            // the ring); HALO ignores this.
+            var cycleAlpha = 1f
+            when (p.role) {
+                PRole.HALO -> {
+                    color = palette.Charple
+                    coreA = 0.30f * (1f - 0.4f * ease) * p.glow
+                }
+                PRole.SPHERE -> {
+                    val aspect = w / h
+                    // Rotate the sphere around its vertical axis so
+                    // it has visible volume even at rest.
+                    val ang = timeSec * SPHERE_ROT_HZ
+                    val cA = cos(ang); val sA = sin(ang)
+                    val rx = p.sxv * cA + p.szv * sA
+                    val rz = -p.sxv * sA + p.szv * cA
+                    val ry = p.syv
+                    // Pseudo-3D depth: front (rz>0) larger + brighter,
+                    // back (rz<0) smaller + dimmer.
+                    val depth01 = ((rz / SPHERE_RADIUS) + 1f) * 0.5f
+                    txN = CIRCLE_CX + rx + gazeX * SPHERE_GAZE_MULT
+                    tyN = CIRCLE_CY + ry * aspect + gazeY * SPHERE_GAZE_MULT * aspect
+                    color = palette.Charple
+                    // Sphere stays solid — alpha modulated only by
+                    // depth + glow, not by the speaking sunburst.
+                    coreA = (0.30f + 0.65f * depth01) * p.glow
+                }
+                PRole.CIRCLE -> {
+                    val aspect = w / h
+                    // Static position on the ring (slow global rotation).
+                    val idleAngle = p.targetAngle + timeSec * CIRCLE_IDLE_ROT
+                    val ringX = cos(idleAngle) * CIRCLE_RADIUS
+                    val ringY = sin(idleAngle) * CIRCLE_RADIUS * aspect
+                    // Sunburst cycle (speaking): cycle 0 = at ring,
+                    // cycle 1 = at outer reach + faded. Quadratic
+                    // easing makes particles linger near the ring then
+                    // accelerate outward (like sparks). Per-particle
+                    // phase staggers so emission is continuous.
+                    val cycle = (((timeSec * p.cycleSpeed) + p.cyclePhase) % 1f + 1f) % 1f
+                    val outProg = cycle * cycle
+                    val burstR = CIRCLE_RADIUS + outProg * SUNBURST_DIST
+                    val burstAngle = idleAngle +
+                        sin(cycle * PI.toFloat() * 2f + p.cyclePhase * 6.2832f) * SUNBURST_WOBBLE
+                    val burstX = cos(burstAngle) * burstR
+                    val burstY = sin(burstAngle) * burstR * aspect
+                    // Blend static ring with sunburst by flowAmount.
+                    val assembledDX = ringX + (burstX - ringX) * flowAmount
+                    val assembledDY = ringY + (burstY - ringY) * flowAmount
+                    txN = CIRCLE_CX + assembledDX
+                    tyN = CIRCLE_CY + assembledDY
+                    color = particleColor(ringStops, p.hueU, timeSec, speaking)
+                    coreA = 0.62f * p.glow
+                    // Alpha: 1 at the ring, fades to 0 as the spark
+                    // races outward (only while speaking).
+                    val burstAlpha = 1f - cycle
+                    cycleAlpha = 1f + (burstAlpha - 1f) * flowAmount
+                }
+            }
+
+            // Both roles blend scatter → assembled by `ease`. For HALO,
+            // txN == sxN (no assembled target) so this is a no-op. For
+            // CIRCLE, ease=0 (no face) → particles scatter and drift;
+            // ease=1 (face detected) → particles form the ring (or the
+            // sunburst, when also speaking).
+            val nx = sxN + (txN - sxN) * ease
+            val ny = syN + (tyN - syN) * ease
+            val cx = nx * w
+            val cy = ny * h
+
+            val baseR = p.size * minOf(w, h)
+            val a = cycleAlpha
+            drawCircle(color.copy(alpha = ((0.08f + 0.10f * coreA) * a).coerceIn(0f, 0.5f)), baseR * 2.6f, Offset(cx, cy))
+            drawCircle(color.copy(alpha = ((0.40f * coreA + 0.08f) * a).coerceIn(0f, 0.9f)), baseR * 1.4f, Offset(cx, cy))
+            drawCircle(color.copy(alpha = ((0.85f * coreA + 0.10f) * a).coerceIn(0f, 1f)), baseR, Offset(cx, cy))
+        }
+    }
+}
+
+// --------------------------------------------------- particle model
+
+/** Role decides how a particle behaves. v7.4: ambient [HALO] drift +
+ *  [CIRCLE] ring (sunburst while speaking) + [SPHERE] inner cluster
+ *  that rotates and tracks the detected face. */
+private enum class PRole { HALO, CIRCLE, SPHERE }
+
+private class FParticle(
+    val homeX: Float, val homeY: Float,        // scatter anchor (0..1 screen)
+    val driftAmpX: Float, val driftAmpY: Float,
+    val driftFreqX: Float, val driftFreqY: Float,
+    val driftPhaseX: Float, val driftPhaseY: Float,
+    val role: PRole,
+    val size: Float,                            // radius as fraction of min(w,h)
+    val glow: Float = 1f,                       // per-particle brightness scalar
+    // CIRCLE-specific:
+    val targetAngle: Float = 0f,                // position on inner ring [0, 2π]
+    val outerAngle: Float = 0f,                 // angle of the outer spawn point
+    val cyclePhase: Float = 0f,                 // [0,1] per-particle stagger
+    val cycleSpeed: Float = 0f,                 // fly-in cycles per second
+    val hueU: Float = 0f,                       // [0,1] color sweep position
+    // SPHERE-specific: 3D coordinates on/in the cluster, normalised
+    // so they stay inside the sphere's radius. Rotated around Y at
+    // draw time → projected to 2D.
+    val sxv: Float = 0f, val syv: Float = 0f, val szv: Float = 0f,
+)
+
+// v7.4 — a LARGE particle CIRCLE in the centre that ONLY forms when
+// the front camera detects a face. Inside the ring sits a particle
+// SPHERE that rotates slowly and tracks the user's head (its centre
+// offsets by pose.yaw/pitch so it visibly moves with the face).
+// While Mythara is speaking, the ring becomes a SUNBURST: particles
+// continuously radiate outward in rays, then respawn at the ring.
+private const val CIRCLE_CX = 0.50f
+private const val CIRCLE_CY = 0.42f
+/** Ring radius (normalised X — Y multiplied by w/h so the ring stays
+ *  circular regardless of phone aspect). v7.4 bumped from 0.17 → 0.26
+ *  so the circle is a substantial centrepiece, not a tight halo. */
+private const val CIRCLE_RADIUS = 0.26f
+/** Slow rotation of the static ring (rad/s) — calm idle drift. */
+private const val CIRCLE_IDLE_ROT = 0.07f
+/** How far past the ring a sunburst particle travels before
+ *  respawning (normalised X units). Scaled with the bigger ring. */
+private const val SUNBURST_DIST = 0.42f
+/** Slight per-cycle angular wobble so rays aren't perfectly straight
+ *  spokes — keeps the burst organic. */
+private const val SUNBURST_WOBBLE = 0.10f
+
+/** Inner particle sphere — sits inside the ring and tracks the
+ *  detected face. Radius in normalised X (aspect-corrected at draw). */
+private const val SPHERE_RADIUS = 0.10f
+/** Sphere auto-rotation rate around the vertical axis (rad/s) — slow
+ *  spin gives the cluster volume even when the face is still. */
+private const val SPHERE_ROT_HZ = 0.30f
+/** How strongly the sphere's centre offsets with head pose (gaze).
+ *  Higher = more dramatic tracking. */
+private const val SPHERE_GAZE_MULT = 0.085f
+
+private val HALO_COLOR = Color(0xFF9B86FF)        // lavender ambient drift
+
+// Vestigial constant — referenced only by the legacy point-cloud
+// `drawFaceCloud`/`buildFaceModel` helpers which are now dead code
+// (kept in the file for a release until polish removes them). Value
+// is irrelevant; just needs to compile.
+@Suppress("unused")
+private const val FACE_EYE_CY = 0.40f
+
+/** Mouth waveform y-offset (normalised height) at position [u] in
+ *  [-1,1]. Always animated — even idle the ribbon undulates gently;
+ *  while speaking the amplitude + speed jump and the multi-harmonic
+ *  shape gives a true audio-visualiser look. */
+private fun mouthWave(u: Float, t: Float, speaking: Boolean): Float {
+    val pi = PI.toFloat()
+    val taper = 1f - u * u * 0.45f
+    return if (speaking) {
+        val w = sin(u * pi * 3f - t * 9f) * 0.55f +
+            sin(u * pi * 7f + t * 5.4f) * 0.34f +
+            sin(u * pi * 13f - t * 13f) * 0.20f +
+            sin(u * pi * 19f + t * 17f) * 0.12f
+        w * 0.060f * taper
+    } else {
+        val w = sin(u * pi * 2f + t * 1.4f) * 0.5f +
+            sin(u * pi * 4f - t * 0.9f) * 0.25f
+        w * 0.024f * taper
+    }
+}
+
+/** Mouth colour at [u] — a chromatic gradient (blue → purple →
+ *  magenta → pink → orange → yellow) that ALWAYS sweeps along the
+ *  ribbon, faster while speaking. The full-spectrum sweep is the
+ *  signature look from the reference image. */
+private fun mouthColor(u: Float, t: Float, speaking: Boolean): Color {
+    val stops = MOUTH_STOPS
+    val sweepSpeed = if (speaking) 0.22f else 0.07f
+    val phase = (u + 1f) * 0.5f + t * sweepSpeed
+    val f = ((phase % 1f) + 1f) % 1f
+    val scaled = f * (stops.size - 1)
+    val i = scaled.toInt().coerceIn(0, stops.size - 2)
+    val frac = scaled - i
+    return androidx.compose.ui.graphics.lerp(stops[i], stops[i + 1], frac)
+}
+
+/** Full-spectrum chromatic stops — legacy hardcoded gradient (dead;
+ *  v7.3 reads stops from the active skin's palette at draw time). */
+@Suppress("unused")
+private val MOUTH_STOPS = listOf(
+    Color(0xFF4A6BFF), // electric blue
+    Color(0xFF8240FF), // purple
+    Color(0xFFE040A0), // magenta
+    Color(0xFFFF3060), // hot pink / red
+    Color(0xFFFF8030), // orange
+    Color(0xFFFFD040), // yellow
+    Color(0xFF4A6BFF), // loop back to blue for continuous sweep
+)
+
+/** Sample a colour along the theme-adaptive gradient [stops] at
+ *  position [u] (0..1), with a time-driven phase shift so the
+ *  gradient sweeps around the ring. Sweep is slow when idle, faster
+ *  while [speaking]. */
+private fun particleColor(stops: List<Color>, u: Float, t: Float, speaking: Boolean): Color {
+    if (stops.size < 2) return stops.firstOrNull() ?: Color.White
+    val sweepSpeed = if (speaking) 0.22f else 0.07f
+    val phase = u + t * sweepSpeed
+    val f = ((phase % 1f) + 1f) % 1f
+    val scaled = f * (stops.size - 1)
+    val i = scaled.toInt().coerceIn(0, stops.size - 2)
+    val frac = scaled - i
+    return androidx.compose.ui.graphics.lerp(stops[i], stops[i + 1], frac)
+}
+
+/** Build the particle field once. v7 abstract redesign:
+ *  - ~600 very fine particles for a flowing ribbon look (reference)
+ *  - Eyes = SOFT Gaussian clusters (no rigid rings) → glowing orbs
+ *  - Mouth = a THICK ribbon (vertical jitter) carrying the full
+ *    chromatic gradient + multi-harmonic wave
+ *  - Halo = denser ambient drift so the un-assembled field reads as
+ *    a living particle cloud, not sparse dots
+ *  All particles share the same tiny radius range so individual dots
+ *  vanish into the band and the whole reads as fluid. */
+private fun buildParticles(): List<FParticle> {
+    val rnd = Random(11)
+    val out = ArrayList<FParticle>(640)
+
+    fun drift(): FloatArray = floatArrayOf(
+        rnd.nextFloat(),                       // homeX
+        rnd.nextFloat(),                       // homeY
+        0.04f + rnd.nextFloat() * 0.11f,       // driftAmpX
+        0.05f + rnd.nextFloat() * 0.13f,       // driftAmpY
+        0.15f + rnd.nextFloat() * 0.55f,       // driftFreqX
+        0.15f + rnd.nextFloat() * 0.55f,       // driftFreqY
+        rnd.nextFloat() * 6.2832f,             // driftPhaseX
+        rnd.nextFloat() * 6.2832f,             // driftPhaseY
+    )
+
+    /** Box–Muller standard-normal sample (mean 0, sigma 1). */
+    fun gauss(): Float {
+        val u1 = rnd.nextDouble().coerceAtLeast(1e-9).toFloat()
+        val u2 = rnd.nextFloat()
+        return sqrt(-2f * ln(u1)) * cos(2f * PI.toFloat() * u2)
+    }
+
+    // ─── Ambient halo (drifts everywhere, never converges) ──────────
+    repeat(140) {
+        val d = drift()
+        out += FParticle(
+            homeX = d[0], homeY = d[1],
+            driftAmpX = d[2], driftAmpY = d[3],
+            driftFreqX = d[4], driftFreqY = d[5],
+            driftPhaseX = d[6], driftPhaseY = d[7],
+            role = PRole.HALO,
+            size = 0.0018f + rnd.nextFloat() * 0.0022f,
+            glow = 0.5f + rnd.nextFloat() * 0.6f,
+        )
+    }
+
+    // ─── Inner SPHERE — rotating cluster that tracks the face ──────
+    // Surface points sampled by normalising a 3D Gaussian (Marsaglia
+    // method) → uniform points on a sphere. A few interior particles
+    // add density to the centre so the sphere reads as filled, not
+    // just a thin shell.
+    repeat(110) { idx ->
+        val gx = gauss()
+        val gy = gauss()
+        val gz = gauss()
+        val len = sqrt(gx * gx + gy * gy + gz * gz).coerceAtLeast(1e-6f)
+        // First 80 = surface; remaining 30 = inner cluster (random
+        // radial offset 0.2..1.0 of SPHERE_RADIUS).
+        val rNorm = if (idx < 80) 1f else (0.2f + rnd.nextFloat() * 0.6f)
+        val sx = gx / len * SPHERE_RADIUS * rNorm
+        val sy = gy / len * SPHERE_RADIUS * rNorm
+        val sz = gz / len * SPHERE_RADIUS * rNorm
+        val d = drift()
+        out += FParticle(
+            homeX = d[0], homeY = d[1],
+            driftAmpX = d[2], driftAmpY = d[3],
+            driftFreqX = d[4], driftFreqY = d[5],
+            driftPhaseX = d[6], driftPhaseY = d[7],
+            role = PRole.SPHERE,
+            size = 0.0020f + rnd.nextFloat() * 0.0022f,
+            glow = 0.75f + rnd.nextFloat() * 0.40f,
+            sxv = sx, syv = sy, szv = sz,
+        )
+    }
+
+    // ─── Centre ring — CIRCLE particles + speaking fly-in cycle ─────
+    // Each particle has a fixed target angle on the ring (evenly
+    // distributed for clean coverage) and a RANDOM outer spawn angle
+    // (uncorrelated, so the streaming comes from every direction).
+    // Per-particle cyclePhase + cycleSpeed staggers the fly-ins so the
+    // stream is continuous, not pulsed.
+    val ringN = 320
+    repeat(ringN) { k ->
+        val tA = (k / ringN.toFloat()) * 6.2832f + rnd.nextFloat() * 0.05f
+        val oA = rnd.nextFloat() * 6.2832f                  // random outer direction
+        val phase = rnd.nextFloat()                         // staggered cycle start
+        val speed = 0.40f + rnd.nextFloat() * 0.95f         // cycles/sec
+        val hue = ((tA / 6.2832f) + rnd.nextFloat() * 0.04f) % 1f
+        val d = drift()
+        out += FParticle(
+            homeX = d[0], homeY = d[1],
+            driftAmpX = d[2], driftAmpY = d[3],
+            driftFreqX = d[4], driftFreqY = d[5],
+            driftPhaseX = d[6], driftPhaseY = d[7],
+            role = PRole.CIRCLE,
+            size = 0.0018f + rnd.nextFloat() * 0.0022f,
+            glow = 0.7f + rnd.nextFloat() * 0.5f,
+            targetAngle = tA,
+            outerAngle = oA,
+            cyclePhase = phase,
+            cycleSpeed = speed,
+            hueU = hue,
+        )
+    }
+    return out
 }
 
 // ----------------------------------------------------------- drawing
@@ -290,7 +626,7 @@ private fun DrawScope.drawFaceCloud(
         when (p.group) {
             FGroup.EYE_L, FGroup.EYE_R, FGroup.EYE_CORE -> {
                 val open = if (p.x < 0f) eyeOpenL else eyeOpenR
-                baseY = EYE_CY + (baseY - EYE_CY) * open
+                baseY = FACE_EYE_CY + (baseY - EYE_CY) * open
             }
             FGroup.MOUTH_LOWER -> baseY += mouthOpen * 0.12f
             else -> {}
@@ -431,7 +767,7 @@ private fun buildFaceModel(): FModel {
     }
 
     // ---- nose — ridge + nostril base + wings ----
-    seg(0f, EYE_CY + 0.05f, 0f, 0.20f, 7, FGroup.NOSE, 0.82f)
+    seg(0f, FACE_EYE_CY + 0.05f, 0f, 0.20f, 7, FGroup.NOSE, 0.82f)
     arc(0f, 0.205f, 0.135f, 0.075f, (PI * 0.12).toFloat(), (PI * 0.88).toFloat(), 11, FGroup.NOSE, 0.84f)
     add(-0.135f, 0.165f, FGroup.NOSE, 0.74f)
     add(0.135f, 0.165f, FGroup.NOSE, 0.74f)

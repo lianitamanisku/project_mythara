@@ -8,9 +8,11 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.platform.LocalContext
 import com.mythara.data.BrightnessMode
 import com.mythara.data.ThemeStore
+import com.mythara.data.UiMode
 import dagger.hilt.EntryPoint
 import dagger.hilt.InstallIn
 import dagger.hilt.android.EntryPointAccessors
@@ -27,6 +29,11 @@ import dagger.hilt.components.SingletonComponent
 interface ThemeStoreEntryPoint {
     fun themeStore(): ThemeStore
 }
+
+/** Active chat rendering aesthetic, provided by [MytharaTheme].
+ *  Defaults to [UiMode.Beautiful]; the chat surface reads it to swap
+ *  between card bubbles and terminal log lines. */
+val LocalUiMode = staticCompositionLocalOf { UiMode.Beautiful }
 
 /**
  * The single MaterialTheme wrapper, now skin + brightness aware.
@@ -53,6 +60,7 @@ fun MytharaTheme(content: @Composable () -> Unit) {
     val skin by themeStore.skinFlow().collectAsState(initial = SkinId.SpatialCards)
     val brightness by themeStore.brightnessModeFlow()
         .collectAsState(initial = BrightnessMode.TimeOfDay)
+    val uiMode by themeStore.uiModeFlow().collectAsState(initial = UiMode.Beautiful)
 
     val isDark = rememberIsDark(brightness)
     val palette = PaletteCatalog.forSkin(skin, isDark)
@@ -61,6 +69,7 @@ fun MytharaTheme(content: @Composable () -> Unit) {
     CompositionLocalProvider(
         LocalMythPalette provides palette,
         LocalSkinSpec provides spec,
+        LocalUiMode provides uiMode,
     ) {
         MaterialTheme(
             colorScheme = palette.toColorScheme(isDark),

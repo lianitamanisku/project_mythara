@@ -49,6 +49,10 @@ class NotificationListener : NotificationListenerService() {
 
     @Inject lateinit var actionStore: NotificationActionStore
 
+    /** v6 — publishes every buffer change so the in-app Notification
+     *  Hub renders a live, observable feed. */
+    @Inject lateinit var feedRepo: NotificationFeedRepository
+
     // Scope for fire-and-forget DataStore writes when notifications
     // are cancelled / clicked. Tied to the service instance so it
     // doesn't outlive the bind; cancelled in onListenerDisconnected.
@@ -87,6 +91,14 @@ class NotificationListener : NotificationListenerService() {
          * never reacts to calls; the user can opt in via Settings.
          */
         val looksLikeCall: Boolean = false,
+        /**
+         * v7 — the notification's tap PendingIntent (sbn.notification.
+         * contentIntent). Used by the in-app Notification Hub + Home
+         * notifications strip to "open the source app" on tap. Null
+         * for notifications without a tap intent; callers fall back
+         * to `PackageManager.getLaunchIntentForPackage(packageName)`.
+         */
+        val contentIntent: android.app.PendingIntent? = null,
     )
 
     override fun onListenerConnected() {
@@ -98,6 +110,7 @@ class NotificationListener : NotificationListenerService() {
         runCatching { activeNotifications?.toList() }.getOrNull()?.forEach { sbn ->
             captureLocked(sbn)
         }
+        publishFeed()
     }
 
     override fun onListenerDisconnected() {
@@ -106,6 +119,7 @@ class NotificationListener : NotificationListenerService() {
             instance = null
             _isEnabled.value = false
             recent.clear()
+            publishFeed()
         }
         Log.d(TAG, "listener disconnected")
     }
@@ -118,6 +132,7 @@ class NotificationListener : NotificationListenerService() {
     override fun onNotificationRemoved(sbn: StatusBarNotification?) {
         if (sbn == null) return
         recent.removeIf { it.key == sbn.key }
+        publishFeed()
     }
 
     /**
@@ -135,6 +150,7 @@ class NotificationListener : NotificationListenerService() {
         super.onNotificationRemoved(sbn, rankingMap, reason)
         if (sbn == null) return
         recent.removeIf { it.key == sbn.key }
+        publishFeed()
         val pkg = sbn.packageName ?: return
         // Only count user-driven actions; app-side cancels, system
         // overlay updates, etc. don't tell us anything about user
@@ -200,6 +216,9 @@ class NotificationListener : NotificationListenerService() {
             imagePaths = savedImages,
             looksLikeVideo = looksLikeVideo,
             looksLikeCall = looksLikeCall,
+            // v7 — capture the tap PendingIntent so the in-app hub +
+            // Home strip can open the source app on tap.
+            contentIntent = sbn.notification?.contentIntent,
         )
         // Detect whether this is a *new* notification vs an update to an
         // existing one (sticky media controls re-post on every track
@@ -209,6 +228,7 @@ class NotificationListener : NotificationListenerService() {
         recent.removeIf { it.key == r.key }
         recent.addFirst(r)
         while (recent.size > BUFFER_SIZE) recent.pollLast()
+        publishFeed()
         // Fan-out for auto-process. We emit even ongoing + self-package
         // here and let the downstream collector filter — keeps the
         // service code simple and lets downstream policy evolve without
@@ -266,6 +286,13 @@ class NotificationListener : NotificationListenerService() {
     /** Snapshot the rolling buffer. Most-recent first. Ongoing
      *  notifications can be filtered out by the caller. */
     fun snapshot(): List<Recent> = recent.toList()
+
+    /** Push the current buffer to the observable feed repo so the
+     *  in-app hub updates live. Guarded — if injection hasn't landed
+     *  yet (very early connect) it just no-ops. */
+    private fun publishFeed() {
+        runCatching { feedRepo.publish(snapshot()) }
+    }
 
     /**
      * Pull any inline image bitmap out of a notification's extras and

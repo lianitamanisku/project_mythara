@@ -177,8 +177,10 @@ fun RoseAmulet(
                         val change = event.changes.firstOrNull { it.id == down.id } ?: break
                         val held = System.currentTimeMillis() - downTime
                         // PTT cross-threshold: still pressed, no swipe
-                        // fired, held >= 250 ms. Fire once.
-                        if (!pttHolding && !swipeFired && change.pressed && held >= PTT_THRESHOLD_MS) {
+                        // fired, held >= PTT_HOLD_MS (3 s). Fire once —
+                        // a deliberate long press arms walkie-talkie
+                        // push-to-talk; release sends.
+                        if (!pttHolding && !swipeFired && change.pressed && held >= PTT_HOLD_MS) {
                             pttHolding = true
                             onPttHoldChange(true, 0L)
                         }
@@ -327,6 +329,12 @@ private const val TRIPLE_TAP_WINDOW_MS = 800L
  *  want a long-press wheel should leave `onLongPress` as the
  *  no-op default. */
 private const val PTT_THRESHOLD_MS = 250L
+
+/** v7 — push-to-talk arms only after a deliberate 3 s hold of the
+ *  rose ("activate on long press more than 3 seconds"), then sends on
+ *  release. Long enough that a quick tap (=Chat) or a 600 ms global
+ *  long-press (=PopupAmulet, fired off-rose) never collides with it. */
+private const val PTT_HOLD_MS = 3000L
 
 /** Mirrors WallpaperRenderer.effectivePulseHz: bpm/300 clamped
  *  [DEFAULT_PULSE_HZ, MAX_PULSE_HZ], or DEFAULT when no fresh HR. */

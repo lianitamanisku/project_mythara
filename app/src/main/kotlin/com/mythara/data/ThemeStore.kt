@@ -17,6 +17,13 @@ import javax.inject.Singleton
 enum class BrightnessMode { Light, Dark, System, TimeOfDay }
 
 /**
+ * Chat rendering aesthetic. [Beautiful] = themed card bubbles (the
+ * default v6 look); [Terminal] = monospace green-on-dark log lines for
+ * users who want the terminal-chat feel. Opt-in, swapped live.
+ */
+enum class UiMode { Beautiful, Terminal }
+
+/**
  * Persists the user's theme choice: which visual [SkinId] + how
  * brightness is resolved ([BrightnessMode]). Mirrors the SettingsStore
  * DataStore idiom. Read by [com.mythara.ui.theme.MytharaTheme] via a
@@ -28,6 +35,7 @@ class ThemeStore @Inject constructor(
 ) {
     private val keySkin = stringPreferencesKey("skin")
     private val keyBrightness = stringPreferencesKey("brightnessMode")
+    private val keyUiMode = stringPreferencesKey("uiMode")
 
     fun skinFlow(): Flow<SkinId> = ctx.dataStore.data.map { prefs ->
         prefs[keySkin]?.let { runCatching { SkinId.valueOf(it) }.getOrNull() }
@@ -37,6 +45,15 @@ class ThemeStore @Inject constructor(
     fun brightnessModeFlow(): Flow<BrightnessMode> = ctx.dataStore.data.map { prefs ->
         prefs[keyBrightness]?.let { runCatching { BrightnessMode.valueOf(it) }.getOrNull() }
             ?: BrightnessMode.TimeOfDay   // user default: auto by time of day
+    }
+
+    fun uiModeFlow(): Flow<UiMode> = ctx.dataStore.data.map { prefs ->
+        prefs[keyUiMode]?.let { runCatching { UiMode.valueOf(it) }.getOrNull() }
+            ?: UiMode.Beautiful   // default: the beautiful card UI
+    }
+
+    suspend fun setUiMode(mode: UiMode) {
+        ctx.dataStore.edit { it[keyUiMode] = mode.name }
     }
 
     suspend fun setSkin(skin: SkinId) {

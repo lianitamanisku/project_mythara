@@ -6,8 +6,10 @@ import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
 import android.os.Build
+import androidx.compose.ui.graphics.toArgb
 import androidx.core.app.NotificationCompat
 import androidx.core.app.RemoteInput
+import kotlinx.coroutines.flow.first
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.ProcessLifecycleOwner
 import com.mythara.MainActivity
@@ -44,7 +46,18 @@ import javax.inject.Singleton
 class ReplyNotification @Inject constructor(
     @ApplicationContext private val ctx: Context,
     private val gemma: GemmaExtractor,
+    private val themeStore: com.mythara.data.ThemeStore,
 ) {
+
+    /** v6 — Mythara's own notifications carry the active skin's brand
+     *  accent (colorised app-name + icon tint), so a reply notification
+     *  reads as "from Mythara" and matches whatever skin is active. */
+    private suspend fun brandAccentArgb(): Int = runCatching {
+        val skin = themeStore.skinFlow().first()
+        // Use the dark-variant accent — it's the vivid brand colour and
+        // reads well on the (usually dark / neutral) system shade.
+        com.mythara.ui.theme.PaletteCatalog.forSkin(skin, dark = true).Charple.toArgb()
+    }.getOrDefault(com.mythara.ui.theme.PaletteCatalog.SpatialDark.Charple.toArgb())
 
     /**
      * Post the reply notification if Mythara is currently in
@@ -139,11 +152,14 @@ class ReplyNotification @Inject constructor(
             .addAction(voiceAction)
             // Big icon could go here later; default is fine.
 
+        val accent = brandAccentArgb()
         val notification = NotificationCompat.Builder(ctx, CHANNEL_ID)
             .setContentTitle("Mythara answered")
             .setContentText(preview)
             .setStyle(NotificationCompat.BigTextStyle().bigText(replyText))
             .setSmallIcon(R.mipmap.ic_launcher)
+            .setColor(accent)
+            .setColorized(true)
             .setContentIntent(tapPi)
             .addAction(replyAction)
             .addAction(voiceAction)

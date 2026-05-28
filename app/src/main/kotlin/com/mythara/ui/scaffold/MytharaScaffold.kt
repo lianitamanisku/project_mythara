@@ -25,10 +25,13 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.graphics.Color
 import com.mythara.ui.anim.EdgeGlow
 import com.mythara.ui.anim.EdgeGlowSpec
 import com.mythara.ui.anim.rememberAlphaPulse
+import com.mythara.ui.theme.Backdrop
 import com.mythara.ui.theme.Glyph
+import com.mythara.ui.theme.LocalSkinSpec
 import com.mythara.ui.theme.MytharaColors
 
 /**
@@ -82,7 +85,14 @@ fun MytharaScaffold(
     modifier: Modifier = Modifier,
     content: @Composable BoxScope.() -> Unit,
 ) {
-    Box(modifier = modifier.fillMaxSize().background(MytharaColors.Bg)) {
+    // Skins with a signature backdrop (Aurora blobs / Living-Rose
+    // breath / HUD rings) must let MythBackdrop show THROUGH the
+    // scaffold — so paint NO opaque fill for them. Spatial (Plain
+    // backdrop) keeps the solid base so it reads exactly like the
+    // pre-v6 flat dark UI.
+    val hasBackdrop = LocalSkinSpec.current.backdrop != Backdrop.Plain
+    val scaffoldFill = if (hasBackdrop) Color.Transparent else MytharaColors.Bg
+    Box(modifier = modifier.fillMaxSize().background(scaffoldFill)) {
         // The inner Column is status-bar-inset-padded so the 44 dp
         // header sliver (glyph + title + back chip) always sits
         // BELOW the system status bar / Dynamic Island. Without

@@ -73,6 +73,7 @@ class MytharaApp : Application(), Configuration.Provider {
     @Inject lateinit var watchNextTaskRelay: com.mythara.wear.WatchNextTaskRelay
     @Inject lateinit var watchPhoneStatusRelay: WatchPhoneStatusRelay
     @Inject lateinit var watchClusterDataPusher: WatchClusterDataPusher
+    @Inject lateinit var healthConnectHrPoller: com.mythara.health.HealthConnectHrPoller
 
     // App-scoped supervisor for fire-and-forget process-level
     // coroutines (settings-flow observers etc.). Cancelled implicitly
@@ -242,5 +243,19 @@ class MytharaApp : Application(), Configuration.Provider {
                 else personaScheduler.stop()
             }
         }
+        // v6 — Google Health (Health Connect) as the PRIMARY in-app HR
+        // source. Foreground-gated: poll only while the app is visible
+        // (the Living-Rose backdrop + bottom rose amulet breathe with
+        // HR; in the background the wallpaper service has its own HR
+        // path). Both start()/stop() are idempotent.
+        androidx.lifecycle.ProcessLifecycleOwner.get().lifecycle.addObserver(
+            androidx.lifecycle.LifecycleEventObserver { _, event ->
+                when (event) {
+                    androidx.lifecycle.Lifecycle.Event.ON_START -> healthConnectHrPoller.start()
+                    androidx.lifecycle.Lifecycle.Event.ON_STOP -> healthConnectHrPoller.stop()
+                    else -> Unit
+                }
+            },
+        )
     }
 }
