@@ -244,6 +244,16 @@ interface ContactProfileDao {
     @Query("UPDATE contact_profiles SET aliases_json = :json WHERE name_key = :key")
     suspend fun updateAliases(key: String, json: String)
 
+    /**
+     * Partial update of just the favorite flag. Used by the contact-
+     * detail star toggle so the People list reorders immediately
+     * without waiting for the next analytics rebuild. Pairs with a
+     * FavoritesStore write so the canonical curated allow-list also
+     * picks up the change.
+     */
+    @Query("UPDATE contact_profiles SET is_favorite = :fav WHERE name_key = :key")
+    suspend fun updateIsFavorite(key: String, fav: Boolean)
+
     /** Replace the source-apps list (JSON array of package names). */
     @Query("UPDATE contact_profiles SET source_apps_json = :json WHERE name_key = :key")
     suspend fun updateSourceApps(key: String, json: String)

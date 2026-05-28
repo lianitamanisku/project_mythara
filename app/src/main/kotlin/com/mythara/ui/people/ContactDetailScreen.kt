@@ -79,10 +79,18 @@ class ContactDetailViewModel @Inject constructor(
     private val faceSampler: com.mythara.face.ContactFaceSampler,
     private val contactFaceIndex: com.mythara.face.ContactFaceIndex,
     private val lifelineRepo: com.mythara.lifeline.LifelineRepository,
+    private val favoritesStore: com.mythara.data.FavoritesStore,
 ) : ViewModel() {
 
     private val _data = MutableStateFlow<ContactDetailData?>(null)
     val data: StateFlow<ContactDetailData?> = _data.asStateFlow()
+
+    /** Live favorite flag — true when EITHER the curated FavoritesStore
+     *  list contains this nameKey OR the profile row's is_favorite
+     *  column is set. The detail header's star reads this flow so the
+     *  fill state stays in sync the moment a toggle lands. */
+    private val _isFavorite = MutableStateFlow(false)
+    val isFavorite: StateFlow<Boolean> = _isFavorite.asStateFlow()
 
     /** Status of the in-flight face-sample add for this contact. Same
      *  shape PeopleViewModel uses — both render through
@@ -98,6 +106,60 @@ class ContactDetailViewModel @Inject constructor(
             }
             val inter = interactions.dao.listForContact(nameKey, limit = 100)
             _data.value = ContactDetailData(row = row, sys = sys, interactions = inter)
+            // Seed the favorite flag from the union of the two stores.
+            val displayName = row?.displayName ?: sys?.displayName ?: nameKey
+            val favList = runCatching { favoritesStore.list() }.getOrDefault(emptyList())
+            val inStore = favList.any { it.name.equals(displayName, ignoreCase = true) }
+            _isFavorite.value = inStore || (row?.isFavorite == true)
+        }
+    }
+
+    /**
+     * Toggle the contact's favorite state. Writes through BOTH stores:
+     *
+     *  1. FavoritesStore — the curated auto-reply allowlist. Adds an
+     *     entry with default tone "Realistic" when promoting; removes
+     *     the entry when demoting. This is the canonical, user-facing
+     *     favorites list.
+     *
+     *  2. contact_profiles.is_favorite — the column the People-list
+     *     ordering reads. Keeping the column in sync makes the list
+     *     reorder immediately without waiting for the next analytics
+     *     rebuild.
+     *
+     * The local _isFavorite flow updates optimistically so the star
+     * fills/empties on tap with no visual delay.
+     */
+    fun toggleFavorite() {
+        val cur = _data.value ?: return
+        val displayName = cur.row?.displayName ?: cur.sys?.displayName ?: return
+        val nameKey = cur.row?.nameKey ?: displayName.lowercase().trim()
+        val phone = cur.sys?.primaryPhone ?: cur.row?.phone.orEmpty()
+        val nowFav = !_isFavorite.value
+        _isFavorite.value = nowFav  // optimistic
+        viewModelScope.launch {
+            runCatching {
+                if (nowFav) {
+                    favoritesStore.upsert(
+                        com.mythara.data.FavoritesStore.Favorite(
+                            name = displayName,
+                            phone = phone,
+                        ),
+                    )
+                } else {
+                    favoritesStore.remove(displayName)
+                }
+                profiles.dao.updateIsFavorite(nameKey, nowFav)
+                // Refresh the row inside _data so a subsequent recompose
+                // sees the new flag (header reads from _isFavorite, but
+                // other consumers of ContactDetailData.row should see
+                // truth too).
+                val refreshed = profiles.dao.byKey(nameKey)
+                _data.value = cur.copy(row = refreshed)
+            }.onFailure {
+                // Revert optimistic update on failure.
+                _isFavorite.value = !nowFav
+            }
         }
     }
 
@@ -214,6 +276,9 @@ fun ContactDetailScreen(
     // then the app-side override on the Mythara profile row.
     val photoUri = data?.sys?.photoUri ?: data?.row?.photoUri
 
+    // collectAsState() must be called from a Composable scope, not
+    // the LazyListScope DSL inside LazyColumn { ... }. Lift it here.
+    val isFav by vm.isFavorite.collectAsState()
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
         contentPadding = PaddingValues(horizontal = 14.dp, vertical = 10.dp),
@@ -224,8 +289,9 @@ fun ContactDetailScreen(
                 displayName = displayName,
                 phone = phone,
                 photoUri = photoUri,
-                isFavorite = data?.row?.isFavorite == true,
+                isFavorite = isFav,
                 hasWhatsApp = hasWa,
+                onToggleFavorite = { vm.toggleFavorite() },
                 onCall = { phone?.let { ContactActions.phoneCall(ctx, it) } },
                 onSms = { phone?.let { ContactActions.sms(ctx, it) } },
                 onWaChat = { phone?.let { ContactActions.whatsAppChat(ctx, it) } },
@@ -324,6 +390,7 @@ private fun HeaderCard(
     photoUri: String?,
     isFavorite: Boolean,
     hasWhatsApp: Boolean,
+    onToggleFavorite: () -> Unit,
     onCall: () -> Unit,
     onSms: () -> Unit,
     onWaChat: () -> Unit,
@@ -340,18 +407,16 @@ private fun HeaderCard(
         Row(verticalAlignment = Alignment.CenterVertically) {
             BigAvatar(name = displayName, photoUri = photoUri)
             Spacer(Modifier.size(12.dp))
-            Column(modifier = Modifier.fillMaxWidth()) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(
-                        text = displayName,
-                        color = MytharaColors.Fg,
-                        style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
-                    )
-                    if (isFavorite) {
-                        Spacer(Modifier.size(6.dp))
-                        Text("★", color = MytharaColors.Mustard, style = MaterialTheme.typography.titleMedium)
-                    }
-                }
+            // Name + phone in one Column expanded to push the
+            // favorite star to the right edge. Tapping the star
+            // toggles the curated FavoritesStore entry + the row's
+            // is_favorite column (see ContactDetailViewModel.toggleFavorite).
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = displayName,
+                    color = MytharaColors.Fg,
+                    style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
+                )
                 phone?.let {
                     Text(
                         text = it,
@@ -360,6 +425,7 @@ private fun HeaderCard(
                     )
                 }
             }
+            FavoriteStar(isFavorite = isFavorite, onToggle = onToggleFavorite)
         }
         Spacer(Modifier.height(12.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -377,6 +443,48 @@ private fun HeaderCard(
                 )
             }
         }
+    }
+}
+
+/**
+ * Tappable favorite star sitting at the top-right of the header
+ * card. Filled mustard "★" when this contact is in the curated
+ * favorites list; outlined "☆" + muted color when not. Tap toggles
+ * via [ContactDetailViewModel.toggleFavorite] which writes through
+ * both the FavoritesStore and the profile row's is_favorite column.
+ *
+ * 40 dp circular hit area — comfortable thumb target without being
+ * visually loud. Bg tints subtly when active so the star reads as a
+ * status pill rather than a decoration.
+ */
+@Composable
+private fun FavoriteStar(isFavorite: Boolean, onToggle: () -> Unit) {
+    val bg = if (isFavorite) {
+        MytharaColors.Mustard.copy(alpha = 0.18f)
+    } else {
+        MytharaColors.Surface.copy(alpha = 0.5f)
+    }
+    val border = if (isFavorite) {
+        MytharaColors.Mustard.copy(alpha = 0.55f)
+    } else {
+        MytharaColors.SurfaceHigh.copy(alpha = 0.5f)
+    }
+    val starColor = if (isFavorite) MytharaColors.Mustard else MytharaColors.FgMute
+    val glyph = if (isFavorite) "★" else "☆"
+    Box(
+        modifier = Modifier
+            .size(40.dp)
+            .clip(CircleShape)
+            .background(bg)
+            .border(1.dp, border, CircleShape)
+            .clickable(onClick = onToggle),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            text = glyph,
+            color = starColor,
+            style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
+        )
     }
 }
 
