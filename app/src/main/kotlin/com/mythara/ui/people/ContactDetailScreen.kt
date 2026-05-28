@@ -528,7 +528,16 @@ private fun BigFiveCard(row: ContactProfileRow) {
 
 @Composable
 private fun TraitBar(label: String, value: Double?, color: Color) {
-    val v = (value ?: 0.0).coerceIn(0.0, 100.0).toFloat() / 100f
+    // ContactProfileRow stores Big Five as 0..1 doubles (see
+    // ContactProfiles.kt:60). The displayed pct is value × 100;
+    // the bar fill is the raw 0..1 value directly. When the
+    // dimension hasn't been estimated yet (sample size too small
+    // for that contact / dimension) the underlying value is null
+    // and we show "—" with a faint placeholder bar so the row still
+    // hints at what gets tracked.
+    val clamped = value?.coerceIn(0.0, 1.0)
+    val barFill = clamped?.toFloat() ?: 0f
+    val pctText = clamped?.let { (it * 100).toInt().toString() } ?: "—"
     Column(modifier = Modifier.padding(vertical = 4.dp)) {
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -536,14 +545,14 @@ private fun TraitBar(label: String, value: Double?, color: Color) {
         ) {
             Text(label, color = MytharaColors.FgMute, style = MaterialTheme.typography.labelSmall)
             Text(
-                text = if (value != null) "${value.toInt()}" else "—",
+                text = pctText,
                 color = MytharaColors.Fg,
                 style = MaterialTheme.typography.labelSmall,
             )
         }
         Spacer(Modifier.height(2.dp))
         LinearProgressIndicator(
-            progress = { v },
+            progress = { barFill },
             color = color,
             trackColor = MytharaColors.SurfaceHigh.copy(alpha = 0.5f),
             modifier = Modifier.fillMaxWidth().height(4.dp).clip(RoundedCornerShape(2.dp)),
