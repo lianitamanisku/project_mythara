@@ -66,6 +66,7 @@ import kotlin.random.Random
 class FaceViewModel @Inject constructor(
     tts: Tts,
     private val tracker: FaceTracker,
+    private val pickupDetector: com.mythara.camera.PhonePickupDetector,
 ) : ViewModel() {
     val speaking: StateFlow<Boolean> =
         tts.speaking.stateIn(viewModelScope, SharingStarted.Eagerly, false)
@@ -73,13 +74,25 @@ class FaceViewModel @Inject constructor(
     /** Smoothed front-camera head pose. `present = false` when no face. */
     val pose: StateFlow<FaceTracker.Pose> = tracker.pose
 
+    /** True while the pickup detector says the camera is allowed to
+     *  run. The screen binds/unbinds CameraX based on this so a
+     *  phone-down idle never streams frames. */
+    val cameraActive: StateFlow<Boolean> = pickupDetector.activeWindow
+
     /** Start / stop the front-camera stream — driven by the screen's
      *  composition lifetime so the camera only runs while it's open. */
     fun bindCamera() = tracker.bind()
     fun unbindCamera() = tracker.unbind()
 
+    /** Start / stop the pickup-detection sensor. Tied to the
+     *  Composable's DisposableEffect so it runs only while Home /
+     *  Face is in the foreground. */
+    fun enablePickupDetector() = pickupDetector.enable()
+    fun disablePickupDetector() = pickupDetector.disable()
+
     override fun onCleared() {
         tracker.unbind()
+        pickupDetector.disable()
     }
 }
 
@@ -121,10 +134,20 @@ fun FaceScreen(onBack: () -> Unit, vm: FaceViewModel = hiltViewModel()) {
     ) { granted -> hasCam = granted }
     LaunchedEffect(Unit) { if (!hasCam) camLauncher.launch(Manifest.permission.CAMERA) }
 
-    // The camera runs ONLY while this screen is composed AND the
-    // permission is held — bound on enter, unbound on leave.
-    DisposableEffect(hasCam) {
-        if (hasCam) vm.bindCamera()
+    // Phone-pickup detector — same low-power gate as Home. The
+    // camera only binds while the pickup window is open; without
+    // it, the cinema view would burn the lens continuously even
+    // when the phone is sitting on a desk.
+    DisposableEffect(Unit) {
+        vm.enablePickupDetector()
+        onDispose { vm.disablePickupDetector() }
+    }
+    val cameraActive by vm.cameraActive.collectAsState()
+
+    // Camera runs ONLY while this screen is composed AND the
+    // permission is held AND a pickup window is open.
+    DisposableEffect(hasCam, cameraActive) {
+        if (hasCam && cameraActive) vm.bindCamera() else vm.unbindCamera()
         onDispose { vm.unbindCamera() }
     }
 

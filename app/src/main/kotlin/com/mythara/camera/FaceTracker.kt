@@ -39,6 +39,7 @@ import javax.inject.Singleton
 @Singleton
 class FaceTracker @Inject constructor(
     @ApplicationContext private val ctx: Context,
+    private val pickupDetector: PhonePickupDetector,
 ) {
     /**
      * Smoothed head pose. Angle fields are normalised to roughly
@@ -185,6 +186,12 @@ class FaceTracker @Inject constructor(
                 // ACTIVE_HOLD_NS. Prevents an isolated dropped frame
                 // from dropping us back to idle-rate mid-tracking.
                 lastDetectedNs = System.nanoTime()
+                // Refresh the pickup detector's active-window timer
+                // so the camera stays bound while a face is actually
+                // in front of the lens. Without this, the 8 s window
+                // would close mid-stare and we'd have to wait for
+                // another pickup gesture to re-engage.
+                pickupDetector.extendWindow()
                 val cur = _pose.value
                 val first = !cur.present
                 // ML Kit euler angles are degrees. NOTE: signs assume the

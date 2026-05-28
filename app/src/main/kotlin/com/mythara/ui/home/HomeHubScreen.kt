@@ -245,9 +245,25 @@ fun HomeHubScreen(
         ActivityResultContracts.RequestPermission(),
     ) { /* granted → handled lazily by next press */ }
 
-    // Camera runs only while Home is composed AND permission held.
-    DisposableEffect(hasCam) {
-        if (hasCam) faceVm.bindCamera()
+    // Phone-pickup detector — registers TYPE_SIGNIFICANT_MOTION while
+    // Home is on screen. Fires when the user picks up the phone and
+    // opens an 8-second "camera allowed" window. Each face detection
+    // extends the window so the camera stays alive while someone is
+    // actually looking; otherwise it unbinds, saving the lens +
+    // ML Kit + GPU costs that the previous always-on flow paid.
+    DisposableEffect(Unit) {
+        faceVm.enablePickupDetector()
+        onDispose { faceVm.disablePickupDetector() }
+    }
+    val cameraActive by faceVm.cameraActive.collectAsState()
+
+    // Camera runs only while Home is composed AND permission held
+    // AND the pickup detector has an open window. The triple-gate
+    // reduces idle camera drain to ~0 — the front sensor is bound
+    // for at most 8 s after each pickup gesture (extended while a
+    // face is in frame).
+    DisposableEffect(hasCam, cameraActive) {
+        if (hasCam && cameraActive) faceVm.bindCamera() else faceVm.unbindCamera()
         onDispose { faceVm.unbindCamera() }
     }
 
