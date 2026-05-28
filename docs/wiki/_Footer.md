@@ -1,0 +1,1 @@
+[Repo](https://github.com/ankurCES/project_mythara) · [Issues](https://github.com/ankurCES/project_mythara/issues) · [Discussions](https://github.com/ankurCES/project_mythara/discussions) — *Build your phone's AI. Don't rent it.*
