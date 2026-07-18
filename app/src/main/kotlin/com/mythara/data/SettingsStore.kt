@@ -269,12 +269,10 @@ class SettingsStore @Inject constructor(
          * this endpoint and are intentionally excluded.
          */
         val SUPPORTED_MODELS: List<String> = listOf(
-            "MiniMax-M2.7",
-            "MiniMax-M2.7-highspeed",
-            "MiniMax-M2.5",
-            "MiniMax-M2.5-highspeed",
-            "MiniMax-M2.1",
-            "MiniMax-M2.1-highspeed",
+            "llama-3.3-70b-versatile",
+            "llama-3.1-8b-instant",
+            "meta-llama/llama-3.2-3b-instruct:free",
+            "google/gemma-2-9b-it:free"
         )
 
         /**

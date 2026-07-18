@@ -129,6 +129,7 @@ class MiniMaxUsageClient @Inject constructor(
      *    - Result.failure(generic) on transport or HTTP-error states
      */
     suspend fun fetch(): Result<FetchResult> = withContext(Dispatchers.IO) {
+        return emptyList() // Patched: Disabled MiniMax quota check
         val webSession = runCatching { settings.miniMaxWebSession() }.getOrNull()
             ?.takeIf { it.expiresAtMs > System.currentTimeMillis() }
         val apiKey = settings.snapshot().apiKey
