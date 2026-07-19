@@ -268,11 +268,59 @@ class SettingsStore @Inject constructor(
          * this endpoint and are intentionally excluded.
          */
         val SUPPORTED_MODELS: List<String> = listOf(
-            "llama-3.3-70b-versatile",   // Groq, gratis, dukung tool-use
+            // GROQ (free tier — 30 RPM / 6K TPM / 1K RPD)
+            "llama-3.3-70b-versatile",
             "llama-3.1-8b-instant",
-            "meta-llama/llama-3.2-3b-instruct:free",
-            "google/gemma-2-9b-it:free",
-            "openrouter/free",           // OpenRouter, gratis, auto-pilih model
+            "openai/gpt-oss-120b",
+            "openai/gpt-oss-20b",
+            "qwen/qwen3.6-27b",
+            "groq/compound",
+            "groq/compound-mini",
+
+            // OPENROUTER :free (15 model — valid Juli 2026)
+            "openrouter/free",
+            "nvidia/nemotron-3-ultra-550b-a55b:free",
+            "nvidia/nemotron-3-super-120b-a12b:free",
+            "nvidia/nemotron-3-nano-30b-a3b:free",
+            "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free",
+            "nvidia/nemotron-nano-12b-v2-vl:free",
+            "nvidia/nemotron-nano-9b-v2:free",
+            "nvidia/nemotron-3.5-content-safety:free",
+            "google/gemma-4-31b-it:free",
+            "google/gemma-4-26b-a4b-it:free",
+            "openai/gpt-oss-20b:free",
+            "cohere/north-mini-code:free",
+            "poolside/laguna-m.1:free",
+            "poolside/laguna-xs-2.1:free",
+            "tencent/hy3:free",
+
+            // SAMBANOVA (free tier — 10-30 RPM, context 8K-64K)
+            "Meta-Llama-3.3-70B-Instruct",
+            "DeepSeek-V3.2",
+            "DeepSeek-V3.1",
+            "gemma-4-31B-it",
+            "gpt-oss-120b",
+            "MiniMax-M2.7",
+
+            // Z.AI / GLM (free tier — ~1.000 req/hari, context 200K)
+            "glm-4.7",
+            "glm-4.6",
+            "glm-4.5",
+            "glm-4.5-air",
+            "glm-5",
+            "glm-5-turbo",
+            "glm-5.1",
+            "glm-5.2",
+
+            // CEREBRAS (free tier — 1M token/hari, context 8K/131K)
+            "gpt-oss-120b",
+            "glm-4.7",
+
+            // GOOGLE AI STUDIO (free tier — ~1.500 req/hari, 1M token/min)
+            "gemini-2.0-flash-exp",
+            "gemini-2.0-flash-lite-preview-02-05",
+            "gemini-1.5-flash",
+        )
         )
 
         /**
