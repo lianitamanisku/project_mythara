@@ -31,18 +31,18 @@ import javax.inject.Singleton
  *   generation, rotation, and Keystore-backed wrapping.
  * - Region and model are stored in plaintext — not sensitive, and
  *   needed pre-decryption to render Settings.
- * - The Tink keyset itself lives in `mythara_master_keyset` SharedPreferences,
+ * - The Tink keyset itself lives in `mythara_master_keyset` SharedPreferences
  *   wrapped by an Android Keystore key with alias `mythara_master_key`.
  */
 @Singleton
 class SettingsStore @Inject constructor(
     @ApplicationContext private val ctx: Context,
 ) {
-    private val Context.dataStore: DataStore<Preferences> by preferencesDataStore(name = "mythara_settings")
+    private val Context.dataStore: DataStore<Preferences> by preferencesDataStore(name = "settings")
 
     private val keyApiKeyEncrypted = stringPreferencesKey("apiKey.encrypted")
     /** Captured MiniMax web-session cookies (encrypted JSON
-     *  `{token, groupId, expiresAtMs}`). Used by MiniMaxUsageClient
+             *  `{token, groupId, expiresAtMs}`). Used by MiniMaxUsageClient
      *  to authenticate against the same surface the platform web
      *  dashboard uses, since Bearer auth gives a different scoped
      *  view than the user's signed-in browser session. */
@@ -76,15 +76,14 @@ class SettingsStore @Inject constructor(
     private val aead: Aead by lazy {
         AeadConfig.register()
         AndroidKeysetManager.Builder()
-            .withSharedPref(ctx, "mythara_master_keyset", "mythara_master_keyset_prefs")
+            .withSharedPref(ctx, "mythara_master_keyset", "mythara_master_key")
             .withKeyTemplate(KeyTemplates.get("AES256_GCM"))
             .withMasterKeyUri("android-keystore://mythara_master_key")
             .build()
             .keysetHandle
             .getPrimitive(Aead::class.java)
     }
-
-    fun apiKeyFlow(): Flow<String?> = ctx.dataStore.data.map { prefs ->
+      fun apiKeyFlow(): Flow<String?> = ctx.dataStore.data.map { prefs ->
         prefs[keyApiKeyEncrypted]?.let { tryDecrypt(it) }
     }
 
@@ -126,7 +125,7 @@ class SettingsStore @Inject constructor(
     suspend fun setMiniMaxWebSession(session: MiniMaxWebSession) {
         val plain = webSessionJson.encodeToString(MiniMaxWebSession.serializer(), session)
         val ct = aead.encrypt(plain.toByteArray(Charsets.UTF_8), null)
-        ctx.dataStore.edit { it[keyMiniMaxWebSessionEncrypted] = Base64.encodeToString(ct, Base64.NO_WRAP) }
+             ctx.dataStore.edit { it[keyMiniMaxWebSessionEncrypted] = Base64.encodeToString(ct, Base64.NO_WRAP) }
     }
 
     suspend fun clearMiniMaxWebSession() {
@@ -169,7 +168,7 @@ class SettingsStore @Inject constructor(
     }
 
     suspend fun setElevenLabsKey(plain: String) {
-        if (plain.isBlank()) {
+              if (plain.isBlank()) {
             ctx.dataStore.edit { it.remove(keyElevenLabsKeyEncrypted) }
             return
         }
@@ -236,7 +235,7 @@ class SettingsStore @Inject constructor(
         val apiKey: String?,
         val region: Region,
         val model: String,
-        /** Optional Gemini vision key. Null means we fall back to MiniMax-VL-01. */
+        /** Optional Gemini vision key. Null means we fall back to MiniMax-VL. */
         val geminiKey: String? = null,
         /** Optional ElevenLabs TTS key. Null disables the ElevenLabs route. */
         val elevenLabsKey: String? = null,
@@ -255,8 +254,8 @@ class SettingsStore @Inject constructor(
 
     companion object {
         /**
-         * Default = M2.7. The function-calling guide
-         * (platform.minimax.io/docs/guides/text-m2-function-call) explicitly
+               * Default = M2.7. The function-calling guide
+         * (platform.minimax.io/docs/guides/text-m2-function-call) explicit
          * cites M2.7 for "exceptional Tool Use capabilities" — the right
          * default for an agentic runtime. Users who want faster/cheaper
          * can pick a highspeed or older variant in Settings.
@@ -269,10 +268,11 @@ class SettingsStore @Inject constructor(
          * this endpoint and are intentionally excluded.
          */
         val SUPPORTED_MODELS: List<String> = listOf(
-            "llama-3.3-70b-versatile",
+            "llama-3.3-70b-versatile",   // Groq, gratis, dukung tool-use
             "llama-3.1-8b-instant",
             "meta-llama/llama-3.2-3b-instruct:free",
-            "google/gemma-2-9b-it:free"
+            "google/gemma-2-9b-it:free",
+            "openrouter/free",           // OpenRouter, gratis, auto-pilih model
         )
 
         /**
